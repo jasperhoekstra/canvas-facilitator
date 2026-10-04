@@ -83,17 +83,17 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
           <table>
             <tbody>
               <tr><td>Actieve/pauzetijd</td><td className="num">{Math.round((m.elapsedMs ?? 0) / 1000)} s / {Math.round((m.pausedMs ?? 0) / 1000)} s</td></tr>
-              <tr><td>Spreektijd jij / facilitator</td><td className="num">{Math.round((m.userSpeechMs ?? 0) / 1000)} s / {Math.round((m.assistantAudioMs ?? 0) / 1000)} s</td></tr>
+              <tr><td>Spreektijd presentator</td><td className="num">{Math.round((m.userSpeechMs ?? 0) / 1000)} s</td></tr>
               <tr><td>Verzonden audio (per stream)</td><td className="num">{(m.streamedAudioSecs ?? 0).toFixed(1)} s</td></tr>
               <tr><td>Beurten jij / facilitator / getypt</td><td className="num">{m.userTurns ?? 0} / {m.assistantTurns ?? 0} / {m.textTurns ?? 0}</td></tr>
               <tr><td>Responses (geannuleerd)</td><td className="num">{m.responses ?? 0} ({m.cancelledResponses ?? 0})</td></tr>
               <tr><td>Tools (geweigerd)</td><td className="num">{d.toolCalls} ({d.toolRejections})</td></tr>
               <tr><td>Challenges / besluiten</td><td className="num">{d.view.canvas.notes.filter((n) => n.kind === "challenge").length} / {d.view.canvas.decisions.length}</td></tr>
               <tr><td>Open canvasvelden</td><td className="num">{d.view.steps.reduce((a, x) => a + x.missing.length, 0)}</td></tr>
-              <tr><td>Onderbrekingen / reconnects / fouten</td><td className="num">{m.bargeIns ?? 0} / {m.reconnects ?? 0} / {m.errors ?? 0}</td></tr>
+              <tr><td>Reconnects / fouten</td><td className="num">{m.reconnects ?? 0} / {m.errors ?? 0}</td></tr>
               <tr><td>Latency p50/p95 eerste transcript</td><td className="num">{m.p50FirstDeltaMs ?? "–"} / {m.p95FirstDeltaMs ?? "–"} ms</td></tr>
               <tr><td>Latency p50/p95 definitief transcript</td><td className="num">{m.p50FinalTranscriptMs ?? "–"} / {m.p95FinalTranscriptMs ?? "–"} ms</td></tr>
-              <tr><td>Latency p50/p95 eerste audio</td><td className="num">{m.p50FirstAudioMs ?? "–"} / {m.p95FirstAudioMs ?? "–"} ms</td></tr>
+              <tr><td>Latency p50/p95 eerste reactie</td><td className="num">{m.p50FirstReplyMs ?? "–"} / {m.p95FirstReplyMs ?? "–"} ms</td></tr>
             </tbody>
           </table>
         </div>

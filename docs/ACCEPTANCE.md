@@ -1,6 +1,6 @@
 # Acceptatiestatus v1.0
 
-Stand: 4 oktober 2026, branch `feat/app-v1`. **Dit is nog geen production-ready 1.0** (PRD §13): de gates hieronder met status *open* vereisen echte hardware, een OpenAI-key met budget, of signing-certificaten.
+Stand: 4 oktober 2026. Zie ook "Afwijkingen van PRD v1.0" in `docs/ARCHITECTURE.md` (tekst in plaats van spraak, geen 15-minutenlimiet); AC-TIME en AC-VOICE (spraakuitvoer) gelden daardoor in aangepaste vorm. **Dit is nog geen production-ready 1.0** (PRD §13): de gates hieronder met status *open* vereisen echte hardware, een OpenAI-key met budget, of signing-certificaten.
 
 | Gate | Status | Bewijs / wat nog moet |
 | --- | --- | --- |

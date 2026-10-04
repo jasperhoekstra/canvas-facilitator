@@ -1,10 +1,12 @@
-//! Hard 900 s session clock (PRD §6). Elapsed time is the MAX of the monotonic clock and the wall
-//! clock, so neither a backwards clock change nor a sleep that pauses the monotonic clock
+//! Session clock with a hard safety cap (originally the PRD §6 900 s limit).
+//! Elapsed time is the MAX of the monotonic clock and the wall clock, so neither a backwards clock change nor a sleep that pauses the monotonic clock
 //! (macOS) can ever extend a session.
 
 use std::time::Instant;
 
-pub const LIMIT_MS: i64 = 900_000;
+/// No user-facing time limit (presentation use). ponytail: a generous hard cap remains as a
+/// safety net against a forgotten running session; raise it if presentations run longer.
+pub const LIMIT_MS: i64 = 4 * 60 * 60 * 1000;
 /// Do not start a new model response with less than this left.
 pub const MIN_RESPONSE_MS: i64 = 6_000;
 

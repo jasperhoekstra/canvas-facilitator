@@ -30,7 +30,7 @@ export function Setup({ status, refresh, onDone }: { status: AppStatus; refresh:
         {step === 0 && (
           <>
             <p>
-              Canvas Facilitator helpt je in één Nederlands gesprek van maximaal 15 minuten een AI-idee uit te werken tot een besluitbaar canvas:
+              Canvas Facilitator luistert mee terwijl je een AI-idee presenteert, stelt zijn vragen als tekst op het scherm en bouwt live een besluitbaar canvas op:
               KIES → MEET → BEGRENS → REALISEER → VERANKER.
             </p>
             <p>Je hebt nodig: een eigen OpenAI API-key, een microfoon (headset aanbevolen) en een budget dat je zelf kiest.</p>

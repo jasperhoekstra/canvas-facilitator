@@ -20,7 +20,7 @@ const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--port",
 await new Promise((ok) => vite.stdout.on("data", (d) => String(d).includes("Local") && ok()));
 
 const sizes = [[1440, 900], [1280, 720]];
-const views = ["live", "live&long", "live&late", "live&panel", "detail", "history", "costs", "settings", "setup", "new"];
+const views = ["live", "live&long", "live&late", "live&overview", "live&transcript", "live&present", "live&panel", "detail", "history", "costs", "settings", "setup", "new"];
 const zoom = [["live", 2], ["live&panel", 2]]; // 200% zoom of a 1440×900 window
 try {
   for (const [w, h] of sizes) {

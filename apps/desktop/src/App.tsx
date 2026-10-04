@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, on, type AppStatus, type CanvasView, type Notice, type Session, type Snapshot, type StepDef, type Turn } from "./api";
-import { clock, STOP_REASON_LABEL, usd } from "./format";
+import { STOP_REASON_LABEL, usd } from "./format";
 import { Costs } from "./components/Costs";
 import { History } from "./components/History";
 import { LiveView } from "./components/LiveView";
@@ -52,7 +52,11 @@ export function App() {
     refresh().then(() => {});
     api.canvasDefinition().then(setSteps);
     const subs = [
-      on<Snapshot>("live", (s) => s.sessionId === sid.current && setSnap(s)),
+      on<Snapshot>("live", (s) => {
+        if (s.sessionId !== sid.current) return;
+        const key = JSON.stringify(s);
+        setSnap((prev) => (prev && JSON.stringify(prev) === key ? prev : s));
+      }),
       on<{ sessionId: string; view: CanvasView }>("canvas", (c) => c.sessionId === sid.current && setCView(c.view)),
       on<Turn>("turn", (t) => {
         if (t.sessionId !== sid.current) return;
@@ -108,7 +112,6 @@ export function App() {
   }
 
   const live = snap && LIVE_STATES.includes(snap.status) ? snap : null;
-  const lowTime = live && live.remainingMs <= 180_000;
   const nav = (v: View) => {
     setView(v);
     setDetail(null);
@@ -126,10 +129,6 @@ export function App() {
             <span className="title" title={title}>{title}</span>
             <span className={`pill ${live.connection === "verbonden" ? "turq" : "yellow"}`} aria-label={`Verbinding: ${live.connection}`}>
               {live.connection === "verbonden" ? "●" : "◌"} {live.connection}
-            </span>
-            <span className={`pill ${lowTime ? "yellow" : ""}`} role="timer" aria-label={`Resterende tijd ${clock(live.remainingMs)}`}>
-              Resterend <span className="timer">{clock(live.remainingMs)}</span>
-              {live.phase === "SYNTH" && " · synthese"}
             </span>
             <span className="pill" aria-label="Geschatte kosten">
               Kosten ~{usd(live.costUsd)}{live.costIncomplete ? "*" : ""} / {usd(live.budgetUsd)}

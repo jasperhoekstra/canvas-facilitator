@@ -67,7 +67,7 @@ const turn = (id: string, speaker: string, text: string, extra = {}) => ({
   interrupted: false, failed: false, spokenText: null, originalText: null, correctedAt: null, ...extra,
 });
 const turns = [
-  turn("a1", "assistant", "Welkom. Waar gaat je AI-idee over en wat wil je na dit kwartier besloten hebben?"),
+  turn("a1", "assistant", "Waar gaat je AI-idee over en wat wil je na deze presentatie besloten hebben?"),
   turn("u2", "user", "Offertes duren te lang, ik wil dat AI de aanvragen uit de mail haalt."),
   turn("a3", "assistant", "Hoe lang duurt een offerte nu gemiddeld, en waar baseren we dat op? En wat zou deze verwachting ontkrachten?", { interrupted: true, spokenText: "Hoe lang duurt een offerte nu gemiddeld," }),
   turn("u4", "user", "Dat weten we eigenlijk niet precies.", { failed: false, correctedAt: now, originalText: "dat weten we eigenlijk niet presies" }),
@@ -81,8 +81,8 @@ const session = { id: "s1", title: "AI-assistent voor offerte-aanvragen", create
   deadlineAt: now + 500_000, status: view === "live" ? "ACTIVE" : "COMPLETED", stopReason: view === "live" ? null : "deadline", style: "neutraal", profile: "quality",
   model: "gpt-realtime-2.1", transcribeModel: "gpt-live-transcribe", parentId: null, priceVersion: "2026-10-04", budgetUsd: "2.00",
   metricsJson: JSON.stringify({ elapsedMs: 900000, userTurns: 14, assistantTurns: 15, responses: 22, p50FirstDeltaMs: 640, p95FirstDeltaMs: 1210 }) };
-const snap = { sessionId: "s1", status: "ACTIVE", remainingMs: q.has("late") ? 75_000 : 500_000, elapsedMs: 400_000, costUsd: "0.4123", costIncomplete: true, budgetUsd: "2.00",
-  voiceState: "luistert", connection: "verbonden", muted: false, paused: false, model: "gpt-realtime-2.1", phase: q.has("late") ? "SYNTH" : "BEGRENS", userTurns: 7, audioInSecs: 95, audioOutSecs: 120 };
+const snap = { sessionId: "s1", status: "ACTIVE", costUsd: "0.4123", costIncomplete: true, budgetUsd: "2.00",
+  voiceState: q.has("late") ? "denkt" : "luistert", connection: "verbonden", muted: false, paused: false, model: "gpt-realtime-2.1", userTurns: 7, audioInSecs: 95 };
 
 mockIPC((cmd) => {
   switch (cmd) {
@@ -97,7 +97,7 @@ mockIPC((cmd) => {
     case "get_pricing": return { pricing: { version: "2026-10-04", verifiedAt: "2026-10-04", source: "https://developers.openai.com/api/docs/pricing", models: {} }, ageDays: 0, stale: false, overridden: false, bundled: {} };
     case "cost_overview": return { total: cost, month: cost, setup: { ...cost, totalUsd: "0" }, deletedSessionRows: 0, settings, priceVersion: "2026-10-04" };
     case "cost_estimate": return { model: "gpt-realtime-2.1", low: "0.947", high: "1.632", priceVersion: "2026-10-04" };
-    case "audio_devices": return { inputs: [{ id: "wasapi:1", name: "Headset-microfoon", default: true }], outputs: [{ id: "wasapi:2", name: "Headset", default: true }] };
+    case "audio_devices": return [{ id: "wasapi:1", name: "Headset-microfoon", default: true }];
     case "plugin:event|listen": return 1;
     default: return null;
   }
@@ -111,6 +111,10 @@ if (view !== "live" && view !== "setup") {
     if (view === "detail") setTimeout(() => (document.querySelector("tbody button") as HTMLButtonElement | null)?.click(), 200);
   }, 300);
 }
-if (q.has("panel")) setTimeout(() => (document.querySelectorAll(".card")[2] as HTMLButtonElement | null)?.click(), 400);
+const clickText = (t: string) => [...document.querySelectorAll("button")].find((b) => b.textContent === t)?.click();
+if (q.has("overview") || q.has("panel")) setTimeout(() => clickText("Overzicht"), 300);
+if (q.has("panel")) setTimeout(() => (document.querySelectorAll(".card")[2] as HTMLButtonElement | null)?.click(), 500);
+if (q.has("transcript")) setTimeout(() => clickText("Transcript"), 300);
+if (q.has("present")) setTimeout(() => document.body.classList.add("presenting"), 800); // window API is not mocked
 
 createRoot(document.getElementById("root")!).render(<App />);

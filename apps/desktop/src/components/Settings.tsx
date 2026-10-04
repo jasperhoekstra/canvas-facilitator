@@ -98,12 +98,12 @@ export function KeyForm({ mask, onChange, profile, onTested }: { mask: string | 
 }
 
 export function AudioSetup({ settings, onSave }: { settings: S; onSave: (s: S) => void }) {
-  const [dev, setDev] = useState<{ inputs: Device[]; outputs: Device[] }>({ inputs: [], outputs: [] });
+  const [inputs, setInputs] = useState<Device[]>([]);
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
   const [err, setErr] = useState("");
   useEffect(() => {
-    api.audioDevices().then(setDev).catch((e) => setErr(errText(e)));
+    api.audioDevices().then(setInputs).catch((e) => setErr(errText(e)));
     const un = on<number>("level", setLevel);
     return () => {
       un.then((f) => f());
@@ -118,7 +118,7 @@ export function AudioSetup({ settings, onSave }: { settings: S; onSave: (s: S) =
       setLevel(0);
     } else {
       try {
-        await api.micTestStart(settings.inputDevice, settings.outputDevice);
+        await api.micTestStart(settings.inputDevice);
         setTesting(true);
       } catch (e) {
         setErr(`${errText(e)}. Controleer of de app microfoontoegang heeft in de systeeminstellingen.`);
@@ -127,31 +127,19 @@ export function AudioSetup({ settings, onSave }: { settings: S; onSave: (s: S) =
   };
   return (
     <div>
-      <div className="grid2">
-        <div>
-          <label htmlFor="in-dev">Microfoon</label>
-          <select id="in-dev" value={settings.inputDevice ?? ""} onChange={(e) => onSave({ ...settings, inputDevice: e.target.value || null })}>
-            <option value="">Standaardapparaat</option>
-            {dev.inputs.map((d) => <option key={d.id} value={d.id}>{d.name}{d.default ? " (standaard)" : ""}</option>)}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="out-dev">Uitvoerapparaat</label>
-          <select id="out-dev" value={settings.outputDevice ?? ""} onChange={(e) => onSave({ ...settings, outputDevice: e.target.value || null })}>
-            <option value="">Standaardapparaat</option>
-            {dev.outputs.map((d) => <option key={d.id} value={d.id}>{d.name}{d.default ? " (standaard)" : ""}</option>)}
-          </select>
-        </div>
-      </div>
+      <label htmlFor="in-dev">Microfoon</label>
+      <select id="in-dev" value={settings.inputDevice ?? ""} onChange={(e) => onSave({ ...settings, inputDevice: e.target.value || null })} style={{ maxWidth: 420 }}>
+        <option value="">Standaardapparaat</option>
+        {inputs.map((d) => <option key={d.id} value={d.id}>{d.name}{d.default ? " (standaard)" : ""}</option>)}
+      </select>
       <div className="row" style={{ marginTop: 12 }}>
         <button className="btn" onClick={toggle}>{testing ? "Stop audiotest" : "Start audiotest"}</button>
         <div className="meter" role="meter" aria-label="Microfoonniveau" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(level * 100)} style={{ width: 200 }}>
           <div style={{ width: `${Math.round(level * 100)}%` }} />
         </div>
-        <button className="btn" disabled={!testing} onClick={() => api.speakerTest().catch((e) => setErr(errText(e)))}>Speel testtoon</button>
       </div>
       {err && <p className="error" role="alert">{err}</p>}
-      <p className="hint">Tip: gebruik een headset. Met ingebouwde luidsprekers onderdrukt de app echo, maar kan harde achtergrondgeluiden als onderbreking zien.</p>
+      <p className="hint">Tip: een headset- of dasspeldmicrofoon pikt de presentator het best op. De facilitator antwoordt alleen met tekst op het scherm.</p>
     </div>
   );
 }

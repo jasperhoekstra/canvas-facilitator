@@ -2,8 +2,28 @@
 
 use crate::canvas::STEPS;
 
-pub const PROMPT_VERSION: &str = "fac-2026-10-04.1";
+pub const PROMPT_VERSION: &str = "fac-2026-10-04.2-tekst";
 pub const STYLES: [&str; 3] = ["neutraal", "coachend", "kritisch"];
+
+/// Per-response addition: may this response show a new question, or only update the canvas?
+pub fn reply_rule(ask: bool) -> &'static str {
+    if ask {
+        "NU: de presentator vraagt om de volgende vraag. Werk eerst het canvas bij met wat net is gezegd en stel daarna precies één nieuwe vraag die het verhaal verder brengt (het belangrijkste open punt, of de volgende stap)."
+    } else {
+        "NU: werk ALLEEN het canvas bij met tools op basis van wat net is gezegd. Schrijf geen tekst en stel geen vraag; de huidige vraag blijft staan tot de presentator \"volgende\" zegt. Is er niets nieuws, doe dan niets."
+    }
+}
+
+/// Is this utterance the presenter asking for the next question ("volgende", "volgende vraag")?
+pub fn is_next_command(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    // Short utterances only, so "de volgende stap is..." in a story does not trigger it.
+    words.len() <= 4 && words.iter().any(|w| w == "volgende" || w == "next")
+}
 
 pub fn instructions(style: &str, title: &str) -> String {
     let style_line = match style {
@@ -22,7 +42,9 @@ Idee/sessietitel: "{title}".
 {style_line}
 
 GESPREKSREGELS
-- Spreek altijd Nederlands. Stel per beurt één primaire vraag. Houd elke beurt kort: doorgaans hooguit 20 seconden spraak.
+- Je spreekt niet: je tekst verschijnt groot op een presentatiescherm terwijl de presentator hardop vertelt. Schrijf altijd Nederlands.
+- Je vraag blijft op het scherm staan tot de presentator "volgende" zegt. Tot die tijd werk je alleen stil het canvas bij; je krijgt per beurt een systeeminstructie of je mag vragen of alleen mag bijwerken.
+- Een vraag: hooguit één korte zin samenvatting plus één primaire vraag, samen maximaal 30 woorden. Geen opsommingen, geen markdown, geen aanhef.
 - Kies steeds de vraag met de hoogste besliswaarde gezien de resterende tijd. Werk geen vragenlijst af.
 - Gebruik discovery, verdieping, challenge en bevestiging. Geef niet voortdurend gelijk. Vraag bijvoorbeeld: "Waar baseren we dat op?" of "Wat zou deze verwachting ontkrachten?"
 - "Sneller", "beter", "efficiënter" zonder getal: vraag hoe en tegen welke nulmeting dat gemeten wordt.
@@ -44,25 +66,20 @@ SCHRIJVEN OP HET CANVAS
 - Vat een stap samen en vraag om bevestiging. Pas na een expliciet "ja/klopt" van de gebruiker: complete_step met user_confirmed=true. Wordt het geweigerd, benoem de open punten.
 - Leg besluiten en vervolgacties vast met mark_decision (eigenaar en termijn leeg laten als onbekend).
 
-TIJD
-- Je krijgt tijdsignalen als systeembericht. Richtbudget: 0:00-0:30 context, tot 3:00 KIES, tot 5:30 MEET, tot 8:00 BEGRENS, tot 11:00 REALISEER, tot 13:30 VERANKER, daarna synthese.
-- Vanaf het signaal "synthese" stel je geen nieuwe verkennende onderwerpen meer voor: vat samen, noem de belangrijkste aannames, het besluit en één eerste actie (of benoem expliciet dat die nog bepaald moet worden).
-- Begin het gesprek met een korte welkomstzin en vraag naar context en gewenste uitkomst."#
+VOLGORDE EN TEMPO
+- Er is geen tijdslimiet: volg het tempo van de presentator en werk de stappen in volgorde af (KIES → MEET → BEGRENS → REALISEER → VERANKER).
+- Na VERANKER, of als de presentator vraagt om af te ronden: geen nieuwe onderwerpen meer. Vat samen: belangrijkste aannames, het besluit en één eerste actie (of benoem expliciet dat die nog bepaald moet worden).
+- Open met één korte vraag naar het idee en de gewenste uitkomst, zonder begroeting."#
     )
 }
 
-/// Time-phase message injected as a system item when the phase changes.
-pub fn phase_message(elapsed_ms: i64) -> Option<(&'static str, String)> {
-    let m = elapsed_ms / 1000;
-    let (key, text) = match m {
-        0..=29 => return None,
-        30..=179 => ("KIES", "Tijdsignaal: richt je nu op KIES."),
-        180..=329 => ("MEET", "Tijdsignaal: ga door naar MEET als KIES voldoende staat."),
-        330..=479 => ("BEGRENS", "Tijdsignaal: ga door naar BEGRENS."),
-        480..=659 => ("REALISEER", "Tijdsignaal: ga door naar REALISEER."),
-        660..=719 => ("VERANKER", "Tijdsignaal: ga door naar VERANKER."),
-        720..=809 => ("WARN", "Tijdsignaal: nog 3 minuten. Rond VERANKER af en bereid de synthese voor."),
-        _ => ("SYNTH", "Tijdsignaal: synthese. Geen nieuwe onderwerpen. Vat samen: belangrijkste aannames, besluit en eerste actie."),
-    };
-    Some((key, format!("{text} Verstreken: {}:{:02}.", m / 60, m % 60)))
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn next_command_only_for_short_utterances() {
+        assert!(super::is_next_command("Volgende."));
+        assert!(super::is_next_command("oké, volgende vraag"));
+        assert!(!super::is_next_command("De volgende stap is dat we de offertes automatisch versturen"));
+        assert!(!super::is_next_command("klopt"));
+    }
 }

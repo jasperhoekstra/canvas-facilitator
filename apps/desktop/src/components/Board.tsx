@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { STATUS_LABEL, type Canvas, type CanvasView, type StepDef, type StepView } from "../api";
 
-const ACCENT = ["turq", "turq", "yellow", "yellow", "yellow"];
+/** Slide colours per step: KIES/MEET turquoise, the rest yellow. */
+export const ACCENT = ["turq", "turq", "yellow", "yellow", "yellow"];
 
 function Card({ s, idx, canvas, sv, onOpen }: { s: StepDef; idx: number; canvas: Canvas; sv: StepView; onOpen: () => void }) {
   const items = canvas.items.filter((i) => i.step === s.key && i.value.trim()).sort((a, b) => b.updatedAt - a.updatedAt);

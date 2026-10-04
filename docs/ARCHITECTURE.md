@@ -32,3 +32,15 @@ Rust (src-tauri/src/)
 - Lineaire resampler en energie-VAD (`ponytail:`-commentaar in `audio.rs`). Vervangen als AC-VOICE (WER, zelf-triggering) dat vereist.
 - Echo-onderdrukking is drempelverhoging tijdens playback, geen echte AEC. Headset wordt aanbevolen in de UI.
 - Slaapdetectie via sprong in de wandklok (>3 s) in plaats van OS-suspend-events. De deadline blijft in beide gevallen correct.
+
+## Afwijkingen van PRD v1.0 (besluit opdrachtgever, 4 oktober 2026)
+
+De app wordt ingezet tijdens presentaties. Daarom:
+
+- **Geen spraakuitvoer.** De Realtime-sessie draait met `output_modalities: ["text"]`; de facilitator stelt zijn vragen als tekst op het scherm. De microfoon blijft de presentator volgen (spraak-in en live transcriptie). Barge-in is niet meer nodig; pauze annuleert nog wel een lopend antwoord. Kosten dalen sterk (geen audio-output).
+- **Geen 15-minutenlimiet en geen zichtbare klok.** Tijdsignalen aan het model zijn vervallen; het model volgt het tempo van de presentator. Als vangnet blijft een harde maximale sessieduur van 4 uur (`clock::LIMIT_MS`) en het kostenbudget. Alle deadline-mechaniek (één poort, watchdog, slaap/klokwijziging, crashherstel) werkt ongewijzigd met die grens.
+- **Presentatiemodus.** Standaardweergave "Verhaal": verhaallijn met vijf hoofdstukken, het actieve hoofdstuk groot met velden die zich vullen, de vraag van de facilitator als citaat en live ondertiteling. "Overzicht" toont de vijf kaarten met besluiten. Toetsen: ←/→ hoofdstuk, L live volgen, O overzicht, T transcript, F volledig scherm.
+- **Distributie voor demo's**: een losse, niet-gesigneerde `.exe` (`npx tauri build --no-bundle`); Windows SmartScreen kan eenmalig waarschuwen. Vereist de WebView2-runtime (standaard aanwezig op Windows 11).
+- **Vraag pas door op "volgende".** Na elke spreekbeurt draait een *stille* response (`response.instructions` + `prompt::reply_rule(false)`): het model werkt alleen het canvas bij; eventuele tekst wordt niet getoond. Een nieuwe vraag (`Reply::Ask`) komt alleen bij "volgende" (korte uitspraak, `prompt::is_next_command`), de knop *Volgende vraag*, `N` of `PageDown` (presentatieklikker). Aanvragen tijdens een lopende response worden gebundeld; Ask wint van Silent.
+- **Microfoon-xruns** (buffer under/overrun) en ontbrekende realtime-prioriteit worden alleen gelogd; de opname loopt door.
+- **Volledig scherm** (`F`/knop, `Esc` sluit): geen bovenbalk, grotere typografie, zwevende bediening die na 2,5 s zonder muisbeweging verdwijnt.
