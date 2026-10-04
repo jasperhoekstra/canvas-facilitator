@@ -1,0 +1,17 @@
+{
+  "version": "2026-10-04",
+  "currency": "USD",
+  "source": "https://developers.openai.com/api/docs/pricing",
+  "verifiedAt": "2026-10-04",
+  "models": {
+    "gpt-realtime-2.1": {
+      "audioIn": "32", "audioCached": "0.40", "audioOut": "64",
+      "textIn": "4", "textCached": "0.40", "textOut": "24"
+    },
+    "gpt-realtime-2.1-mini": {
+      "audioIn": "10", "audioCached": "0.30", "audioOut": "20",
+      "textIn": "0.60", "textCached": "0.06", "textOut": "2.40"
+    },
+    "gpt-live-transcribe": { "perMinute": "0.017" }
+  }
+}

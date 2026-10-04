@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cost-estimate"
+description = "Enables the cost_estimate command without any pre-configured scope."
+commands.allow = ["cost_estimate"]
+
+[[permission]]
+identifier = "deny-cost-estimate"
+description = "Denies the cost_estimate command without any pre-configured scope."
+commands.deny = ["cost_estimate"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-action"
+description = "Enables the add_action command without any pre-configured scope."
+commands.allow = ["add_action"]
+
+[[permission]]
+identifier = "deny-add-action"
+description = "Denies the add_action command without any pre-configured scope."
+commands.deny = ["add_action"]

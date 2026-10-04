@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switch-input"
+description = "Enables the switch_input command without any pre-configured scope."
+commands.allow = ["switch_input"]
+
+[[permission]]
+identifier = "deny-switch-input"
+description = "Denies the switch_input command without any pre-configured scope."
+commands.deny = ["switch_input"]

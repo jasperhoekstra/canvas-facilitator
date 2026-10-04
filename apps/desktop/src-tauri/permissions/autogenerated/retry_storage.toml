@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-storage"
+description = "Enables the retry_storage command without any pre-configured scope."
+commands.allow = ["retry_storage"]
+
+[[permission]]
+identifier = "deny-retry-storage"
+description = "Denies the retry_storage command without any pre-configured scope."
+commands.deny = ["retry_storage"]
