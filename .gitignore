@@ -1,0 +1,24 @@
+# deps / builds
+node_modules/
+dist/
+target/
+*.tsbuildinfo
+# secrets & local data — never commit
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+*.p12
+sessions/
+diagnostics/
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
