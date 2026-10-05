@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errText, type Session, type SessionDetail as Detail, type StepDef } from "../api";
 import { date, duration, SESSION_STATUS_LABEL, STOP_REASON_LABEL, usd } from "../format";
 import { Board } from "./Board";
+import { Ending } from "./Ending";
 import { CostDetail } from "./Costs";
 import { StepPanel } from "./StepPanel";
 import { Transcript } from "./Transcript";
@@ -13,6 +14,7 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
   const [panel, setPanel] = useState<string | null>(null);
   const [withTranscript, setWithTranscript] = useState(true);
   const [del, setDel] = useState(false);
+  const [ending, setEnding] = useState(true); // after a session, open on the closing story
   const [keepCosts, setKeepCosts] = useState(true);
   const [title, setTitle] = useState("");
 
@@ -42,6 +44,7 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <button className="btn ghost" onClick={onBack}>← Sessies</button>
         <div className="row">
+          <button className="btn" aria-pressed={ending} onClick={() => setEnding(!ending)}>{ending ? "Toon canvas" : "Toon slotverhaal"}</button>
           <button className="btn" onClick={() => onFollowUp(s)}>Verder uitwerken (nieuwe sessie)</button>
           <button className="btn danger" onClick={() => setDel(true)}>Verwijderen</button>
         </div>
@@ -63,8 +66,8 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
         </p>
         <p className="hint">Klik op een kaart om te corrigeren. Na afsluiten werkt dit offline; een nieuwe AI-vraag vereist een nieuwe sessie.</p>
       </div>
-      <div style={{ height: "52vh", display: "flex", flexDirection: "column", marginBottom: 16 }}>
-        <Board steps={steps} view={d.view} onOpen={setPanel} />
+      <div style={{ minHeight: "52vh", display: "flex", flexDirection: "column", marginBottom: 16 }}>
+        {ending ? <Ending title={s.title} steps={steps} view={d.view} /> : <Board steps={steps} view={d.view} onOpen={setPanel} />}
       </div>
       <div className="grid2">
         <div className="panel">

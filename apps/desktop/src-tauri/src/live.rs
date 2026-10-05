@@ -124,6 +124,9 @@ struct St {
     cost: CostSummary,
     pause_started: Option<i64>,
     last_ckpt: HashMap<String, i64>,
+    last_emit: HashMap<String, i64>,
+    /// Last snapshot sent to the UI; unchanged snapshots are not re-sent.
+    last_snapshot: String,
     m: Metrics,
 }
 
@@ -638,7 +641,16 @@ impl Live {
     }
 
     pub fn emit_snapshot(&self) {
-        emit(&self.app, "live", self.snapshot());
+        let s = self.snapshot();
+        let key = serde_json::to_string(&s).unwrap_or_default();
+        {
+            let mut st = self.st.lock().unwrap();
+            if st.last_snapshot == key {
+                return;
+            }
+            st.last_snapshot = key;
+        }
+        emit(&self.app, "live", s);
     }
 
     fn emit_canvas(&self) {
@@ -664,7 +676,19 @@ impl Live {
                 self.storage_failure(&e);
             }
         }
-        emit(&self.app, "turn", t.clone());
+        // Provisional text: at most ~8 UI updates per second per turn (final always goes out).
+        let show = force || t.is_final || {
+            let mut st = self.st.lock().unwrap();
+            let last = st.last_emit.get(&t.id).copied().unwrap_or(0);
+            let due = now - last >= 120;
+            if due {
+                st.last_emit.insert(t.id.clone(), now);
+            }
+            due
+        };
+        if show {
+            emit(&self.app, "turn", t);
+        }
     }
 
     fn storage_failure(&self, e: &str) {
@@ -719,7 +743,14 @@ impl Live {
             return false;
         }
         // Response-level instructions replace the session ones, so repeat them (same prefix: cacheable).
-        let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), prompt::reply_rule(kind == Reply::Ask));
+        let rule = {
+            let st = self.st.lock().unwrap();
+            let mut asked: Vec<&Turn> = st.turns.values().filter(|t| t.speaker == "assistant" && t.is_final && !t.text.is_empty()).collect();
+            asked.sort_by_key(|t| t.seq);
+            let asked: Vec<String> = asked.iter().rev().take(6).map(|t| t.text.clone()).collect();
+            prompt::reply_rule(kind == Reply::Ask, &st.canvas.focus_hint(), &asked)
+        };
+        let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), rule);
         let ok = self.send(Conn::Rt, json!({"type": "response.create", "response": {"instructions": instructions}}));
         if ok {
             let mut st = self.st.lock().unwrap();

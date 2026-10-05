@@ -6,12 +6,24 @@ pub const PROMPT_VERSION: &str = "fac-2026-10-04.2-tekst";
 pub const STYLES: [&str; 3] = ["neutraal", "coachend", "kritisch"];
 
 /// Per-response addition: may this response show a new question, or only update the canvas?
-pub fn reply_rule(ask: bool) -> &'static str {
-    if ask {
-        "NU: de presentator vraagt om de volgende vraag. Werk eerst het canvas bij met wat net is gezegd en stel daarna precies één nieuwe vraag die het verhaal verder brengt (het belangrijkste open punt, of de volgende stap)."
-    } else {
-        "NU: werk ALLEEN het canvas bij met tools op basis van wat net is gezegd. Schrijf geen tekst en stel geen vraag; de huidige vraag blijft staan tot de presentator \"volgende\" zegt. Is er niets nieuws, doe dan niets."
+/// `focus` describes where the story is (chapter + open fields); `asked` lists recent questions.
+pub fn reply_rule(ask: bool, focus: &str, asked: &[String]) -> String {
+    if !ask {
+        return "NU: werk ALLEEN het canvas bij met tools op basis van wat net is gezegd. Schrijf geen tekst en stel geen vraag; \
+                de huidige vraag blijft staan tot de presentator \"volgende\" zegt. Is er niets nieuws, doe dan niets."
+            .into();
     }
+    let mut r = format!(
+        "NU: de presentator vraagt om de volgende vraag. Werk eerst het canvas bij met wat net is gezegd. \
+         Stel daarna precies één nieuwe vraag over het belangrijkste open punt.\n{focus}"
+    );
+    if !asked.is_empty() {
+        r.push_str("\nAl gesteld (niet herhalen, ook niet anders verwoord):\n");
+        for q in asked {
+            r.push_str(&format!("- {q}\n"));
+        }
+    }
+    r
 }
 
 /// Is this utterance the presenter asking for the next question ("volgende", "volgende vraag")?

@@ -99,7 +99,11 @@ pub fn markdown(s: &SessionRow, c: &Canvas, turns: Option<&[Turn]>, cost: &CostS
         }
         o.push_str("\n\n");
     }
-    o.push_str("## Besluiten en acties\n\n");
+    o.push_str("## Het verhaal\n\n");
+    for (st, line) in STEPS.iter().zip(c.story()) {
+        o.push_str(&format!("- **{}** — {line}\n", st.key));
+    }
+    o.push_str("\n## Besluiten en acties\n\n");
     if c.decisions.is_empty() {
         o.push_str("- Eerste actie: nog te bepalen\n");
     }

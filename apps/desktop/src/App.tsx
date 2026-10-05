@@ -10,7 +10,7 @@ import { SettingsPage } from "./components/Settings";
 import { Setup } from "./components/Setup";
 
 type View = "session" | "history" | "costs" | "settings";
-const EMPTY: CanvasView = { canvas: { items: [], notes: [], decisions: [], completed: [] }, steps: [], activeStep: null };
+const EMPTY: CanvasView = { canvas: { items: [], notes: [], decisions: [], completed: [] }, steps: [], activeStep: null, story: [] };
 const LIVE_STATES = ["CONNECTING", "ACTIVE", "PAUSED", "FINALIZING"];
 
 export function App() {
@@ -52,11 +52,8 @@ export function App() {
     refresh().then(() => {});
     api.canvasDefinition().then(setSteps);
     const subs = [
-      on<Snapshot>("live", (s) => {
-        if (s.sessionId !== sid.current) return;
-        const key = JSON.stringify(s);
-        setSnap((prev) => (prev && JSON.stringify(prev) === key ? prev : s));
-      }),
+      // The backend only emits changed snapshots.
+      on<Snapshot>("live", (s) => s.sessionId === sid.current && setSnap(s)),
       on<{ sessionId: string; view: CanvasView }>("canvas", (c) => c.sessionId === sid.current && setCView(c.view)),
       on<Turn>("turn", (t) => {
         if (t.sessionId !== sid.current) return;
@@ -147,7 +144,7 @@ export function App() {
       </header>
 
       {view === "session" && live && !detail ? (
-        <LiveView steps={steps} snap={live} view={cview} setView={setCView} turns={turns} setTurns={setTurns} onError={onError} />
+        <LiveView title={title} steps={steps} snap={live} view={cview} setView={setCView} turns={turns} setTurns={setTurns} onError={onError} />
       ) : (
         <main>
           {detail ? (

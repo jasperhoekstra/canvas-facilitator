@@ -30,7 +30,7 @@ export interface StepCompletion { step: string; synthesis: string; confirmationT
 export interface Canvas { items: CanvasItem[]; notes: Note[]; decisions: Decision[]; completed: StepCompletion[] }
 /** Canvas plus step state derived natively (the rules live only in Rust). */
 export interface StepView { step: string; status: "niet gestart" | "actief" | "voldoende uitgewerkt" | "open punten"; missing: string[] }
-export interface CanvasView { canvas: Canvas; steps: StepView[]; activeStep: string | null }
+export interface CanvasView { canvas: Canvas; steps: StepView[]; activeStep: string | null; story: string[] }
 
 export interface Turn {
   id: string; sessionId: string; seq: number; providerItemId: string | null; speaker: "user" | "assistant";

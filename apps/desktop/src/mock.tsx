@@ -52,8 +52,15 @@ const canvas = {
 };
 // Mirrors what Rust's Canvas::view() derives for this fixture.
 const canvasView = {
-  canvas,
+  canvas: q.has("intro") ? { items: [], notes: [], decisions: [], completed: [] } : canvas,
   activeStep: "BEGRENS",
+  story: [
+    "Voor Binnendienst offertes (12 fte) lossen we eerst dit op: Doorlooptijd offerte-aanvraag. De klus: Offerte binnen 1 dag versturen. Business owner: Hoofd Sales Support.",
+    "Succes meten we met Doorlooptijd aanvraag→offerte: van [nog open] naar < 24 uur voor 80% van aanvragen, binnen [nog open].",
+    "De AI doet dit: [nog open], met Gedeelde mailbox + ERP-artikelen. Grootste risico: [nog open]; daarom [nog open] en [nog open].",
+    "We bouwen [nog open] ([nog open]) en beginnen klein: [nog open]. Geslaagd als: [nog open].",
+    "[nog open] borgt het in [nog open]; we evalueren [nog open].",
+  ],
   steps: [
     { step: "KIES", status: "voldoende uitgewerkt", missing: [] },
     { step: "MEET", status: "open punten", missing: ["Baseline", "Termijn", "Meetwijze", "Eigenaar"] },
@@ -66,7 +73,7 @@ const turn = (id: string, speaker: string, text: string, extra = {}) => ({
   id, sessionId: "s1", seq: Number(id.slice(1)), providerItemId: null, speaker, startedAt: now, endedAt: now, text, final: true,
   interrupted: false, failed: false, spokenText: null, originalText: null, correctedAt: null, ...extra,
 });
-const turns = [
+const turns = q.has("intro") ? [] : [
   turn("a1", "assistant", "Waar gaat je AI-idee over en wat wil je na deze presentatie besloten hebben?"),
   turn("u2", "user", "Offertes duren te lang, ik wil dat AI de aanvragen uit de mail haalt."),
   turn("a3", "assistant", "Hoe lang duurt een offerte nu gemiddeld, en waar baseren we dat op? En wat zou deze verwachting ontkrachten?", { interrupted: true, spokenText: "Hoe lang duurt een offerte nu gemiddeld," }),
@@ -115,6 +122,7 @@ const clickText = (t: string) => [...document.querySelectorAll("button")].find((
 if (q.has("overview") || q.has("panel")) setTimeout(() => clickText("Overzicht"), 300);
 if (q.has("panel")) setTimeout(() => (document.querySelectorAll(".card")[2] as HTMLButtonElement | null)?.click(), 500);
 if (q.has("transcript")) setTimeout(() => clickText("Transcript"), 300);
+if (q.has("ending")) setTimeout(() => clickText("Slot"), 300);
 if (q.has("present")) setTimeout(() => document.body.classList.add("presenting"), 800); // window API is not mocked
 
 createRoot(document.getElementById("root")!).render(<App />);

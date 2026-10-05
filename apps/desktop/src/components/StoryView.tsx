@@ -62,13 +62,30 @@ function Chapter({ s, idx, total, view }: { s: StepDef; idx: number; total: numb
 
 /** Presentation mode: chapter in focus, the facilitator's question as a quote, live subtitles.
  *  `focus` is driven by LiveView (auto-follows the active step unless the presenter navigates). */
-export const StoryView = memo(function StoryView({ steps, view, turns, thinking, focus, following, onPick, onFollow, onNext }: {
-  steps: StepDef[]; view: CanvasView; turns: Turn[]; thinking: boolean; focus: number; following: boolean;
+export const StoryView = memo(function StoryView({ title, steps, view, turns, thinking, focus, following, onPick, onFollow, onNext }: {
+  title: string; steps: StepDef[]; view: CanvasView; turns: Turn[]; thinking: boolean; focus: number; following: boolean;
   onPick: (i: number) => void; onFollow: () => void; onNext: () => void;
 }) {
   if (!steps.length) return null;
-  const question = turns.findLast((t) => t.speaker === "assistant" && t.text.trim());
+  const questions = turns.filter((t) => t.speaker === "assistant" && t.text.trim());
+  const question = questions.at(-1);
+  const earlier = questions.slice(-3, -1).reverse();
   const said = turns.findLast((t) => t.speaker === "user" && t.text.trim());
+
+  // Opening slide until the story has started (no words from the presenter, empty canvas).
+  if (!said && view.canvas.items.length === 0) {
+    return (
+      <div className="intro">
+        <div className="chapter-kicker">Vijf stappen maken van een AI-idee blijvende bedrijfswaarde</div>
+        <h1 className="intro-title">{title}</h1>
+        <Rail steps={steps} view={view} focus={-1} onPick={onPick} />
+        <blockquote key={question?.id ?? "intro"} className="quote intro-quote">
+          {question ? question.text : "Vertel over je AI-idee: welk probleem wil je oplossen, en voor wie?"}
+        </blockquote>
+        <p className="hint">Begin gewoon met vertellen; het canvas vult zich terwijl je praat.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="story">
@@ -85,6 +102,12 @@ export const StoryView = memo(function StoryView({ steps, view, turns, thinking,
           {said && (
             <div className={`subtitle ${said.final ? "" : "provisional"}`}>
               <span className="who">Jij</span> {said.text}
+            </div>
+          )}
+          {earlier.length > 0 && (
+            <div className="earlier" aria-label="Eerder gevraagd">
+              <div className="tile-label">Eerder gevraagd</div>
+              {earlier.map((q) => <p key={q.id}>{q.text}</p>)}
             </div>
           )}
           {!following && <button className="btn small ghost follow" onClick={onFollow}>↻ Volg live (L)</button>}

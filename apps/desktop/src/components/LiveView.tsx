@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, on, type CanvasView, type Snapshot, type StepDef, type Turn } from "../api";
 import { Board } from "./Board";
+import { Ending } from "./Ending";
 import { StepPanel } from "./StepPanel";
 import { StoryView } from "./StoryView";
 import { Transcript } from "./Transcript";
@@ -28,12 +29,12 @@ function Meter({ off }: { off: boolean }) {
   );
 }
 
-export function LiveView({ steps, snap, view, setView, turns, setTurns, onError }: {
-  steps: StepDef[]; snap: Snapshot; view: CanvasView; setView: (v: CanvasView) => void; turns: Turn[];
+export function LiveView({ title, steps, snap, view, setView, turns, setTurns, onError }: {
+  title: string; steps: StepDef[]; snap: Snapshot; view: CanvasView; setView: (v: CanvasView) => void; turns: Turn[];
   setTurns: (f: (t: Turn[]) => Turn[]) => void; onError: (m: string) => void;
 }) {
   const onCorrected = useCallback((t: Turn) => setTurns((ts) => ts.map((x) => (x.id === t.id ? t : x))), [setTurns]);
-  const [mode, setMode] = useState<"story" | "overview">("story");
+  const [mode, setMode] = useState<"story" | "overview" | "ending">("story");
   const [panel, setPanel] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [confirmStop, setConfirmStop] = useState(false);
@@ -81,7 +82,8 @@ export function LiveView({ steps, snap, view, setView, turns, setTurns, onError 
     const k = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest("input, textarea, select")) return;
       const key = e.key.toLowerCase();
-      if (key === "o") setMode((m) => (m === "story" ? "overview" : "story"));
+      if (key === "o") setMode((m) => (m === "overview" ? "story" : "overview"));
+      if (key === "s") setMode((m) => (m === "ending" ? "story" : "ending"));
       if (key === "f") setFullscreen(!presentingRef.current);
       if (key === "escape" && presentingRef.current) setFullscreen(false);
       // "N", or PageDown from a presentation clicker: next question.
@@ -104,9 +106,11 @@ export function LiveView({ steps, snap, view, setView, turns, setTurns, onError 
 
   return (
     <div className={`live ${mode}`}>
-      {mode === "story" ? (
+      {mode === "ending" ? (
+        <Ending title={title} steps={steps} view={view} />
+      ) : mode === "story" ? (
         <StoryView
-          steps={steps} view={view} turns={turns} thinking={snap.voiceState === "denkt"}
+          title={title} steps={steps} view={view} turns={turns} thinking={snap.voiceState === "denkt"}
           focus={focus} following={pinned === null || pinned === activeIdx} onPick={pick} onFollow={follow} onNext={next}
         />
       ) : (
@@ -132,6 +136,7 @@ export function LiveView({ steps, snap, view, setView, turns, setTurns, onError 
         <div className="seg" role="group" aria-label="Weergave">
           <button className="btn small" aria-pressed={mode === "story"} onClick={() => setMode("story")}>Verhaal</button>
           <button className="btn small" aria-pressed={mode === "overview"} onClick={() => setMode("overview")}>Overzicht</button>
+          <button className="btn small" aria-pressed={mode === "ending"} onClick={() => setMode("ending")} title="Slotverhaal (S)">Slot</button>
         </div>
         <button className="btn small ghost" aria-pressed={showTranscript} onClick={() => setShowTranscript(!showTranscript)}>Transcript</button>
         <button className="btn small primary" disabled={ended || busy || snap.paused} onClick={next} title="Volgende vraag (N, PageDown of zeg 'volgende')">Volgende vraag ⏭</button>
