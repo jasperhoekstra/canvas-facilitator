@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-canvas-definition"
+description = "Enables the canvas_definition command without any pre-configured scope."
+commands.allow = ["canvas_definition"]
+
+[[permission]]
+identifier = "deny-canvas-definition"
+description = "Denies the canvas_definition command without any pre-configured scope."
+commands.deny = ["canvas_definition"]

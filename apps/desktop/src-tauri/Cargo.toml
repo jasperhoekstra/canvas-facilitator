@@ -1,0 +1,36 @@
+[package]
+name = "canvas-facilitator"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "canvas_facilitator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json"] }
+cpal = "0.18"
+rust_decimal = { version = "1", features = ["serde-str"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.23"
+getrandom = "0.4"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

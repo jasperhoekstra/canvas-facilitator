@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-costs"
+description = "Enables the export_costs command without any pre-configured scope."
+commands.allow = ["export_costs"]
+
+[[permission]]
+identifier = "deny-export-costs"
+description = "Denies the export_costs command without any pre-configured scope."
+commands.deny = ["export_costs"]

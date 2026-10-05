@@ -22,3 +22,8 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+# local build/test output
+apps/desktop/*.log
+apps/desktop/screenshots/
+fac-report-*.json
+release/
