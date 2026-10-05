@@ -304,6 +304,61 @@ impl Canvas {
         }))
     }
 
+    /// Value of a field for the closing story, or a visible gap.
+    fn say(&self, step: &str, field: &str) -> String {
+        match self.item(step, field) {
+            Some(i) if !i.value.trim().is_empty() && i.status != "PARKED" => i.value.trim().trim_end_matches('.').to_string(),
+            _ => "[nog open]".into(),
+        }
+    }
+
+    /// The whole story in one sentence per chapter, built from the canvas without an AI call
+    /// (works offline, after the session, and costs nothing). Gaps stay visible as "[nog open]".
+    pub fn story(&self) -> Vec<String> {
+        let s = |step, field| self.say(step, field);
+        vec![
+            format!(
+                "Voor {} lossen we eerst dit op: {}. De klus: {}. Business owner: {}.",
+                s("KIES", "doelgroep"), s("KIES", "probleem"), s("KIES", "job_to_be_done"), s("KIES", "business_owner")
+            ),
+            format!(
+                "Succes meten we met {}: van {} naar {}, binnen {}.",
+                s("MEET", "kpi"), s("MEET", "baseline"), s("MEET", "target"), s("MEET", "termijn")
+            ),
+            format!(
+                "De AI doet dit: {}, met {}. Grootste risico: {}; daarom {} en {}.",
+                s("BEGRENS", "modeltaak"), s("BEGRENS", "databron"), s("BEGRENS", "risico"), s("BEGRENS", "guardrail"), s("BEGRENS", "menselijke_controle")
+            ),
+            format!(
+                "We bouwen {} ({}) en beginnen klein: {}. Geslaagd als: {}.",
+                s("REALISEER", "concept"), s("REALISEER", "build_buy_partner"), s("REALISEER", "experiment"), s("REALISEER", "testcriterium")
+            ),
+            format!(
+                "{} borgt het in {}; we evalueren {}.",
+                s("VERANKER", "eigenaar"), s("VERANKER", "procesintegratie"), s("VERANKER", "evaluatiemoment")
+            ),
+        ]
+    }
+
+    /// Where the story is: the active chapter (or the first unfinished one) and its open fields.
+    pub fn focus_hint(&self) -> String {
+        let step = self
+            .active_step()
+            .filter(|s| !self.is_complete(s))
+            .or_else(|| STEPS.iter().map(|s| s.key).find(|s| !self.is_complete(s)));
+        match step {
+            Some(s) => {
+                let missing = self.missing_fields(s);
+                if missing.is_empty() {
+                    format!("Hoofdstuk {s} is inhoudelijk compleet: vraag om bevestiging van de synthese of ga naar het volgende hoofdstuk.")
+                } else {
+                    format!("Huidig hoofdstuk: {s}. Nog open: {}.", missing.join(", "))
+                }
+            }
+            None => "Alle hoofdstukken zijn uitgewerkt: vraag naar het besluit en de eerste actie.".into(),
+        }
+    }
+
     pub fn view(&self) -> View {
         let active = self.active_step().map(String::from);
         View {
@@ -312,6 +367,7 @@ impl Canvas {
                 .map(|s| StepView { step: s.key, status: self.step_status(s.key, active.as_deref()), missing: self.missing_fields(s.key) })
                 .collect(),
             active_step: active,
+            story: self.story(),
             canvas: self.clone(),
         }
     }
@@ -468,6 +524,8 @@ pub struct View {
     pub canvas: Canvas,
     pub steps: Vec<StepView>,
     pub active_step: Option<String>,
+    /// One sentence per chapter for the closing slide.
+    pub story: Vec<String>,
 }
 
 /// Tool schemas sent to the Realtime session. Kept to the PRD §11 surface.
@@ -596,6 +654,17 @@ mod tests {
         let v = c.view();
         assert_eq!(v.steps.len(), 5);
         assert_eq!(v.steps[0].status, "niet gestart");
+    }
+
+    #[test]
+    fn story_marks_gaps_and_uses_values() {
+        let mut c = Canvas::default();
+        let m = c.manual_edit("KIES", "doelgroep", "Binnendienst.", "DECIDED", 1).unwrap();
+        c.apply(&Mutation::Item(m));
+        let s = c.story();
+        assert_eq!(s.len(), 5);
+        assert!(s[0].starts_with("Voor Binnendienst lossen"));
+        assert!(s[0].contains("[nog open]"));
     }
 
     #[test]

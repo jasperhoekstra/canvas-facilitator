@@ -153,12 +153,12 @@ async fn test_connection(profile: String) -> R<Value> {
 }
 
 #[tauri::command]
-fn audio_devices() -> audio::Devices {
-    audio::devices()
+fn audio_devices() -> Vec<audio::DeviceInfo> {
+    audio::input_devices()
 }
 
 #[tauri::command]
-fn mic_test_start(app: tauri::AppHandle, st: State<AppState>, input: Option<String>, output: Option<String>) -> R<()> {
+fn mic_test_start(app: tauri::AppHandle, st: State<AppState>, input: Option<String>) -> R<()> {
     if st.live().is_some() {
         return Err("Niet beschikbaar tijdens een sessie".into());
     }
@@ -169,7 +169,7 @@ fn mic_test_start(app: tauri::AppHandle, st: State<AppState>, input: Option<Stri
         audio::AudioEvent::DeviceError(m) | audio::AudioEvent::DeviceFallback(m) => live::notice(&app, "warn", &m),
         _ => {}
     });
-    let h = audio::start(input, output, audio::Gate::open(), sink)?;
+    let h = audio::start(input, Arc::new(std::sync::atomic::AtomicBool::new(true)), sink)?;
     *st.mic.lock().unwrap() = Some(h);
     Ok(())
 }
@@ -179,13 +179,6 @@ fn mic_test_stop(st: State<AppState>) {
     st.mic.lock().unwrap().take();
 }
 
-#[tauri::command]
-fn speaker_test(st: State<AppState>) -> R<()> {
-    let mic = st.mic.lock().unwrap();
-    let h = mic.as_ref().ok_or("Start eerst de audiotest")?;
-    h.playback.push("tone", &audio::tone());
-    Ok(())
-}
 
 #[tauri::command]
 fn get_settings(st: State<AppState>) -> R<Settings> {
@@ -225,7 +218,8 @@ fn cost_estimate(st: State<AppState>, profile: String) -> R<Value> {
     let p = st.db()?.lock().unwrap().pricing();
     let m = models::for_profile(&profile);
     let t = ledger::Usage { billed_seconds: Some(Decimal::from(900)), ..Default::default() };
-    let base = ledger::Usage { audio_in: 53_600, audio_cached: 50_000, audio_out: 7_200, text_in: 60_000, text_cached: 50_000, text_out: 1_500, ..Default::default() };
+    // Text-only facilitator: no audio output; questions + tool calls as text output.
+    let base = ledger::Usage { audio_in: 53_600, audio_cached: 50_000, text_in: 60_000, text_cached: 50_000, text_out: 4_000, ..Default::default() };
     let heavy = ledger::Usage { audio_in: 75_000, ..base.clone() };
     let tr = ledger::cost(&p, models::TRANSCRIBE, &t)?;
     Ok(json!({"model": m, "low": ledger::cost(&p, m, &base)? + tr, "high": ledger::cost(&p, m, &heavy)? + tr, "priceVersion": p.version}))
@@ -333,6 +327,12 @@ fn stop_session(st: State<AppState>, id: String) -> R<()> {
 #[tauri::command]
 fn set_mute(st: State<AppState>, id: String, muted: bool) -> R<()> {
     st.live_for(&id)?.set_mute(muted);
+    Ok(())
+}
+
+#[tauri::command]
+fn next_question(st: State<AppState>, id: String) -> R<()> {
+    st.live_for(&id)?.next_question();
     Ok(())
 }
 
@@ -563,8 +563,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status, retry_storage, save_key, delete_key, test_connection, audio_devices, mic_test_start, mic_test_stop,
-            speaker_test, get_settings, save_settings, get_pricing, cost_estimate, create_session, start_session,
-            resume_session, pause_session, stop_session, set_mute, send_text, switch_input, live_snapshot, list_sessions,
+            get_settings, save_settings, get_pricing, cost_estimate, create_session, start_session,
+            resume_session, pause_session, stop_session, set_mute, send_text, next_question, switch_input, live_snapshot, list_sessions,
             get_session, canvas_definition, edit_item, confirm_step, add_action, delete_note, correct_turn, rename_session,
             delete_session, cost_overview, export_session, export_costs, export_diagnostics
         ])

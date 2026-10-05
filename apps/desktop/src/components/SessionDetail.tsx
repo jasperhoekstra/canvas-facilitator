@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errText, type Session, type SessionDetail as Detail, type StepDef } from "../api";
 import { date, duration, SESSION_STATUS_LABEL, STOP_REASON_LABEL, usd } from "../format";
 import { Board } from "./Board";
+import { Ending } from "./Ending";
 import { CostDetail } from "./Costs";
 import { StepPanel } from "./StepPanel";
 import { Transcript } from "./Transcript";
@@ -13,6 +14,7 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
   const [panel, setPanel] = useState<string | null>(null);
   const [withTranscript, setWithTranscript] = useState(true);
   const [del, setDel] = useState(false);
+  const [ending, setEnding] = useState(true); // after a session, open on the closing story
   const [keepCosts, setKeepCosts] = useState(true);
   const [title, setTitle] = useState("");
 
@@ -42,6 +44,7 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <button className="btn ghost" onClick={onBack}>← Sessies</button>
         <div className="row">
+          <button className="btn" aria-pressed={ending} onClick={() => setEnding(!ending)}>{ending ? "Toon canvas" : "Toon slotverhaal"}</button>
           <button className="btn" onClick={() => onFollowUp(s)}>Verder uitwerken (nieuwe sessie)</button>
           <button className="btn danger" onClick={() => setDel(true)}>Verwijderen</button>
         </div>
@@ -63,8 +66,8 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
         </p>
         <p className="hint">Klik op een kaart om te corrigeren. Na afsluiten werkt dit offline; een nieuwe AI-vraag vereist een nieuwe sessie.</p>
       </div>
-      <div style={{ height: "52vh", display: "flex", flexDirection: "column", marginBottom: 16 }}>
-        <Board steps={steps} view={d.view} onOpen={setPanel} />
+      <div style={{ minHeight: "52vh", display: "flex", flexDirection: "column", marginBottom: 16 }}>
+        {ending ? <Ending title={s.title} steps={steps} view={d.view} /> : <Board steps={steps} view={d.view} onOpen={setPanel} />}
       </div>
       <div className="grid2">
         <div className="panel">
@@ -83,17 +86,17 @@ export function SessionDetail({ id, steps, onBack, onFollowUp, onError, onInfo }
           <table>
             <tbody>
               <tr><td>Actieve/pauzetijd</td><td className="num">{Math.round((m.elapsedMs ?? 0) / 1000)} s / {Math.round((m.pausedMs ?? 0) / 1000)} s</td></tr>
-              <tr><td>Spreektijd jij / facilitator</td><td className="num">{Math.round((m.userSpeechMs ?? 0) / 1000)} s / {Math.round((m.assistantAudioMs ?? 0) / 1000)} s</td></tr>
+              <tr><td>Spreektijd presentator</td><td className="num">{Math.round((m.userSpeechMs ?? 0) / 1000)} s</td></tr>
               <tr><td>Verzonden audio (per stream)</td><td className="num">{(m.streamedAudioSecs ?? 0).toFixed(1)} s</td></tr>
               <tr><td>Beurten jij / facilitator / getypt</td><td className="num">{m.userTurns ?? 0} / {m.assistantTurns ?? 0} / {m.textTurns ?? 0}</td></tr>
               <tr><td>Responses (geannuleerd)</td><td className="num">{m.responses ?? 0} ({m.cancelledResponses ?? 0})</td></tr>
               <tr><td>Tools (geweigerd)</td><td className="num">{d.toolCalls} ({d.toolRejections})</td></tr>
               <tr><td>Challenges / besluiten</td><td className="num">{d.view.canvas.notes.filter((n) => n.kind === "challenge").length} / {d.view.canvas.decisions.length}</td></tr>
               <tr><td>Open canvasvelden</td><td className="num">{d.view.steps.reduce((a, x) => a + x.missing.length, 0)}</td></tr>
-              <tr><td>Onderbrekingen / reconnects / fouten</td><td className="num">{m.bargeIns ?? 0} / {m.reconnects ?? 0} / {m.errors ?? 0}</td></tr>
+              <tr><td>Reconnects / fouten</td><td className="num">{m.reconnects ?? 0} / {m.errors ?? 0}</td></tr>
               <tr><td>Latency p50/p95 eerste transcript</td><td className="num">{m.p50FirstDeltaMs ?? "–"} / {m.p95FirstDeltaMs ?? "–"} ms</td></tr>
               <tr><td>Latency p50/p95 definitief transcript</td><td className="num">{m.p50FinalTranscriptMs ?? "–"} / {m.p95FinalTranscriptMs ?? "–"} ms</td></tr>
-              <tr><td>Latency p50/p95 eerste audio</td><td className="num">{m.p50FirstAudioMs ?? "–"} / {m.p95FirstAudioMs ?? "–"} ms</td></tr>
+              <tr><td>Latency p50/p95 eerste reactie</td><td className="num">{m.p50FirstReplyMs ?? "–"} / {m.p95FirstReplyMs ?? "–"} ms</td></tr>
             </tbody>
           </table>
         </div>

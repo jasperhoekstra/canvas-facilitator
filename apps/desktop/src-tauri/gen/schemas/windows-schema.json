@@ -315,6 +315,12 @@
           "markdownDescription": "Enables the mic_test_stop command without any pre-configured scope."
         },
         {
+          "description": "Enables the next_question command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-next-question",
+          "markdownDescription": "Enables the next_question command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pause_session command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pause-session",
@@ -361,12 +367,6 @@
           "type": "string",
           "const": "allow-set-mute",
           "markdownDescription": "Enables the set_mute command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the speaker_test command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-speaker-test",
-          "markdownDescription": "Enables the speaker_test command without any pre-configured scope."
         },
         {
           "description": "Enables the start_session command without any pre-configured scope.",
@@ -531,6 +531,12 @@
           "markdownDescription": "Denies the mic_test_stop command without any pre-configured scope."
         },
         {
+          "description": "Denies the next_question command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-next-question",
+          "markdownDescription": "Denies the next_question command without any pre-configured scope."
+        },
+        {
           "description": "Denies the pause_session command without any pre-configured scope.",
           "type": "string",
           "const": "deny-pause-session",
@@ -577,12 +583,6 @@
           "type": "string",
           "const": "deny-set-mute",
           "markdownDescription": "Denies the set_mute command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the speaker_test command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-speaker-test",
-          "markdownDescription": "Denies the speaker_test command without any pre-configured scope."
         },
         {
           "description": "Denies the start_session command without any pre-configured scope.",

@@ -56,7 +56,6 @@ pub struct Metrics {
     pub elapsed_ms: i64,
     pub paused_ms: i64,
     pub user_speech_ms: i64,
-    pub assistant_audio_ms: i64,
     pub streamed_audio_secs: f64,
     pub user_turns: i64,
     pub assistant_turns: i64,
@@ -65,13 +64,13 @@ pub struct Metrics {
     pub cancelled_responses: i64,
     pub tool_calls: i64,
     pub tool_rejections: i64,
-    pub barge_ins: i64,
     pub reconnects: i64,
     pub errors: i64,
     pub transcript_failures: i64,
     pub lat_first_delta_ms: Vec<i64>,
     pub lat_final_transcript_ms: Vec<i64>,
-    pub lat_first_audio_ms: Vec<i64>,
+    /// User turn end → first text of the facilitator's reply.
+    pub lat_first_reply_ms: Vec<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -79,8 +78,6 @@ pub struct Metrics {
 pub struct Snapshot {
     pub session_id: String,
     pub status: String,
-    pub remaining_ms: i64,
-    pub elapsed_ms: i64,
     pub cost_usd: Decimal,
     pub cost_incomplete: bool,
     pub budget_usd: Decimal,
@@ -89,10 +86,8 @@ pub struct Snapshot {
     pub muted: bool,
     pub paused: bool,
     pub model: String,
-    pub phase: String,
     pub user_turns: i64,
     pub audio_in_secs: f64,
-    pub audio_out_secs: f64,
 }
 
 #[derive(Default)]
@@ -109,18 +104,18 @@ struct St {
     pending_tr: VecDeque<String>,
     tr_items: HashMap<String, String>,
     asst_items: HashMap<String, String>,
-    asst_bytes: HashMap<String, u64>,
-    interrupted_ratio: HashMap<String, f64>,
     speaking_turn: Option<String>,
     turn_timing: HashMap<String, (Instant, Option<Instant>, bool)>,
     last_user_turn: Option<String>,
     in_flight: Option<String>,
-    /// A user turn arrived while a (cancelled) response was still settling.
-    needs_response: bool,
-    awaiting_audio_since: Option<Instant>,
+    /// Reply requested while another response was in flight (Ask wins over a silent update).
+    queued: Option<Reply>,
+    /// Kinds of requested responses not yet acknowledged by `response.created`, in order.
+    requested: VecDeque<Reply>,
+    reply_kind: HashMap<String, Reply>,
+    awaiting_reply_since: Option<Instant>,
     tool_followups: u32,
     items: VecDeque<String>,
-    phase: String,
     budget_warned: u8,
     status: String,
     connection: String,
@@ -129,6 +124,9 @@ struct St {
     cost: CostSummary,
     pause_started: Option<i64>,
     last_ckpt: HashMap<String, i64>,
+    last_emit: HashMap<String, i64>,
+    /// Last snapshot sent to the UI; unchanged snapshots are not re-sent.
+    last_snapshot: String,
     m: Metrics,
 }
 
@@ -142,18 +140,25 @@ pub struct Live {
     month_budget: Decimal,
     style: String,
     title: String,
-    voice: String,
     input_dev: Mutex<Option<String>>,
-    output_dev: Option<String>,
     clock: Mutex<Clock>,
     closing: AtomicBool,
     paused: AtomicBool,
     muted: AtomicBool,
-    gate: Arc<audio::Gate>,
+    /// Microphone gate read by the audio thread: false while muted, paused or closed.
+    capture: Arc<AtomicBool>,
     conns: Mutex<Conns>,
     generation: AtomicU64,
     audio: Mutex<Option<audio::AudioHandle>>,
     st: Mutex<St>,
+}
+
+/// What a model response may do: silently update the canvas, or also show the next question.
+/// Questions only advance when the presenter asks for it ("volgende", button, N/PageDown).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Reply {
+    Silent,
+    Ask,
 }
 
 #[derive(Debug)]
@@ -178,15 +183,6 @@ fn pct(v: &mut [i64], p: f64) -> Option<i64> {
     }
     v.sort_unstable();
     Some(v[((v.len() as f64 - 1.0) * p).round() as usize])
-}
-
-fn spoken_prefix(text: &str, ratio: f64) -> String {
-    let n = (text.chars().count() as f64 * ratio.clamp(0.0, 1.0)) as usize;
-    let cut: String = text.chars().take(n).collect();
-    match cut.rfind(' ') {
-        Some(i) if n < text.chars().count() => cut[..i].to_string(),
-        _ => cut,
-    }
 }
 
 impl Live {
@@ -238,14 +234,12 @@ impl Live {
             month_budget: settings.monthly_budget_usd,
             style: row.style.clone(),
             title: row.title.clone(),
-            voice: settings.voice.clone(),
             input_dev: Mutex::new(settings.input_device.clone()),
-            output_dev: settings.output_device.clone(),
             clock: Mutex::new(clock),
             closing: AtomicBool::new(false),
             paused: AtomicBool::new(false),
             muted: AtomicBool::new(false),
-            gate: audio::Gate::open(),
+            capture: Arc::new(AtomicBool::new(true)),
             conns: Mutex::new(Conns::default()),
             generation: AtomicU64::new(0),
             audio: Mutex::new(None),
@@ -272,9 +266,6 @@ impl Live {
 
     // ---------- gate ----------
 
-    fn now_elapsed(&self) -> i64 {
-        self.clock.lock().unwrap().elapsed_ms(now_ms())
-    }
     fn remaining(&self) -> i64 {
         self.clock.lock().unwrap().remaining_ms(now_ms())
     }
@@ -393,10 +384,10 @@ impl Live {
         self.send(Conn::Rt, json!({"type": "session.update", "session": {
             "type": "realtime",
             "instructions": prompt::instructions(&self.style, &self.title),
-            "output_modalities": ["audio"],
+            // The facilitator never speaks: questions appear as text on the (presentation) screen.
+            "output_modalities": ["text"],
             "audio": {
-                "input": {"format": {"type": "audio/pcm", "rate": audio::RATE}, "turn_detection": null},
-                "output": {"format": {"type": "audio/pcm", "rate": audio::RATE}, "voice": self.voice}
+                "input": {"format": {"type": "audio/pcm", "rate": audio::RATE}, "turn_detection": null}
             },
             "tools": canvas::tool_schemas(),
             "tool_choice": "auto",
@@ -462,8 +453,8 @@ impl Live {
         self.start_audio();
         self.set_connection("verbonden");
         if !resumed {
-            // Facilitator opens the conversation.
-            self.maybe_respond();
+            // Facilitator opens with its first question.
+            self.request(Reply::Ask);
         }
         Ok(())
     }
@@ -494,9 +485,7 @@ impl Live {
     fn close_streams(&self) {
         self.generation.fetch_add(1, SeqCst);
         self.drop_conns();
-        if let Some(a) = self.audio.lock().unwrap().take() {
-            a.playback.clear();
-        }
+        self.audio.lock().unwrap().take();
         let mut st = self.st.lock().unwrap();
         st.in_flight = None;
         st.pending_tr.clear();
@@ -510,10 +499,9 @@ impl Live {
                 l.on_audio(e)
             }
         });
-        self.gate.capture.store(!self.muted.load(SeqCst) && !self.paused.load(SeqCst), SeqCst);
-        self.gate.playback.store(true, SeqCst);
+        self.capture.store(!self.muted.load(SeqCst) && !self.paused.load(SeqCst), SeqCst);
         let dev = self.input_dev.lock().unwrap().clone();
-        match audio::start(dev, self.output_dev.clone(), self.gate.clone(), sink) {
+        match audio::start(dev, self.capture.clone(), sink) {
             Ok(h) => *self.audio.lock().unwrap() = Some(h),
             // Text input stays possible without a microphone.
             Err(e) => notice(&self.app, "warn", &format!("{e}. Je kunt typen of een ander apparaat kiezen.")),
@@ -572,7 +560,7 @@ impl Live {
                         diag::log("suspend detected");
                         self.close_streams();
                         self.paused.store(true, SeqCst);
-                        self.gate.capture.store(false, SeqCst);
+                        self.capture.store(false, SeqCst);
                         self.st.lock().unwrap().pause_started.get_or_insert(now_ms());
                         self.set_connection("gesloten");
                         self.set_status("PAUSED");
@@ -594,27 +582,6 @@ impl Live {
     fn every_second(self: &Arc<Self>) {
         let now = now_ms();
         let _ = self.db.lock().unwrap().heartbeat(&self.sid, now);
-        let elapsed = self.now_elapsed();
-        // Phase signals.
-        if let Some((key, msg)) = prompt::phase_message(elapsed) {
-            let changed = {
-                let mut st = self.st.lock().unwrap();
-                let c = st.phase != key;
-                if c {
-                    st.phase = key.into();
-                }
-                c
-            };
-            if changed && !self.paused.load(SeqCst) {
-                self.system_item(&msg);
-                if key == "WARN" {
-                    emit(&self.app, "warning", json!({"kind": "time", "text": "Nog 3 minuten"}));
-                }
-                if key == "SYNTH" {
-                    self.maybe_respond();
-                }
-            }
-        }
         // Budget: warnings at 80/95% of the usable (post-margin) budget.
         let spent = self.st.lock().unwrap().cost.total_usd;
         let usable = ledger::usable_budget(self.budget);
@@ -647,17 +614,9 @@ impl Live {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        let playing = self.audio.lock().unwrap().as_ref().map(|a| a.playback.is_playing()).unwrap_or(false);
-        let (elapsed, remaining) = {
-            let c = self.clock.lock().unwrap();
-            let now = now_ms();
-            (c.elapsed_ms(now), c.remaining_ms(now))
-        };
         let st = self.st.lock().unwrap();
         let voice = if self.paused.load(SeqCst) {
             "gepauzeerd"
-        } else if playing {
-            "spreekt"
         } else if st.in_flight.is_some() {
             "denkt"
         } else if self.muted.load(SeqCst) {
@@ -668,8 +627,6 @@ impl Live {
         Snapshot {
             session_id: self.sid.clone(),
             status: st.status.clone(),
-            remaining_ms: remaining,
-            elapsed_ms: elapsed,
             cost_usd: st.cost.total_usd,
             cost_incomplete: st.cost.incomplete,
             budget_usd: self.budget,
@@ -678,15 +635,22 @@ impl Live {
             muted: self.muted.load(SeqCst),
             paused: self.paused.load(SeqCst),
             model: self.model.clone(),
-            phase: st.phase.clone(),
             user_turns: st.m.user_turns,
             audio_in_secs: st.m.user_speech_ms as f64 / 1000.0,
-            audio_out_secs: st.m.assistant_audio_ms as f64 / 1000.0,
         }
     }
 
     pub fn emit_snapshot(&self) {
-        emit(&self.app, "live", self.snapshot());
+        let s = self.snapshot();
+        let key = serde_json::to_string(&s).unwrap_or_default();
+        {
+            let mut st = self.st.lock().unwrap();
+            if st.last_snapshot == key {
+                return;
+            }
+            st.last_snapshot = key;
+        }
+        emit(&self.app, "live", s);
     }
 
     fn emit_canvas(&self) {
@@ -712,7 +676,19 @@ impl Live {
                 self.storage_failure(&e);
             }
         }
-        emit(&self.app, "turn", t.clone());
+        // Provisional text: at most ~8 UI updates per second per turn (final always goes out).
+        let show = force || t.is_final || {
+            let mut st = self.st.lock().unwrap();
+            let last = st.last_emit.get(&t.id).copied().unwrap_or(0);
+            let due = now - last >= 120;
+            if due {
+                st.last_emit.insert(t.id.clone(), now);
+            }
+            due
+        };
+        if show {
+            emit(&self.app, "turn", t);
+        }
     }
 
     fn storage_failure(&self, e: &str) {
@@ -756,7 +732,7 @@ impl Live {
     }
 
     /// Ask the model to respond if nothing else is generating and time/budget allow.
-    fn maybe_respond(self: &Arc<Self>) -> bool {
+    fn maybe_respond(self: &Arc<Self>, kind: Reply) -> bool {
         if self.paused.load(SeqCst) || self.remaining() < clock::MIN_RESPONSE_MS {
             return false;
         }
@@ -766,50 +742,50 @@ impl Live {
         if !self.budget_ok() {
             return false;
         }
-        let ok = self.send(Conn::Rt, json!({"type": "response.create"}));
+        // Response-level instructions replace the session ones, so repeat them (same prefix: cacheable).
+        let rule = {
+            let st = self.st.lock().unwrap();
+            let mut asked: Vec<&Turn> = st.turns.values().filter(|t| t.speaker == "assistant" && t.is_final && !t.text.is_empty()).collect();
+            asked.sort_by_key(|t| t.seq);
+            let asked: Vec<String> = asked.iter().rev().take(6).map(|t| t.text.clone()).collect();
+            prompt::reply_rule(kind == Reply::Ask, &st.canvas.focus_hint(), &asked)
+        };
+        let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), rule);
+        let ok = self.send(Conn::Rt, json!({"type": "response.create", "response": {"instructions": instructions}}));
         if ok {
+            let mut st = self.st.lock().unwrap();
             // Placeholder until response.created arrives: prevents concurrent generations.
-            self.st.lock().unwrap().in_flight = Some(String::new());
+            st.in_flight = Some(String::new());
+            st.requested.push_back(kind);
         }
         ok
     }
 
-    /// After a user turn: respond now, or as soon as the (cancelled) response in flight settles.
-    fn respond_to_user(self: &Arc<Self>) {
-        if self.st.lock().unwrap().in_flight.is_some() {
-            self.st.lock().unwrap().needs_response = true;
-        } else {
-            self.maybe_respond();
+    /// Respond now, or as soon as the response in flight settles.
+    fn request(self: &Arc<Self>, kind: Reply) {
+        let busy = {
+            let mut st = self.st.lock().unwrap();
+            if st.in_flight.is_some() {
+                st.queued = st.queued.max(Some(kind));
+            }
+            st.in_flight.is_some()
+        };
+        if !busy {
+            self.maybe_respond(kind);
         }
     }
 
-    fn barge_in(&self) {
-        let cleared = self.audio.lock().unwrap().as_ref().map(|a| a.playback.clear()).unwrap_or_default();
-        let in_flight = self.st.lock().unwrap().in_flight.clone();
-        if in_flight.is_some() {
+    /// Presenter asked for the next question (button, key or saying "volgende").
+    pub fn next_question(self: &Arc<Self>) {
+        self.st.lock().unwrap().tool_followups = 0;
+        self.request(Reply::Ask);
+    }
+
+    /// Pause cancels a reply that is still being written.
+    fn cancel_response(&self) {
+        if self.st.lock().unwrap().in_flight.is_some() {
             self.send(Conn::Rt, json!({"type": "response.cancel"}));
         }
-        if cleared.is_empty() && in_flight.is_none() {
-            return;
-        }
-        for (item, played_ms) in &cleared {
-            // Server conversation now matches what the user actually heard.
-            self.send(Conn::Rt, json!({"type": "conversation.item.truncate", "item_id": item, "content_index": 0, "audio_end_ms": played_ms}));
-            let mut st = self.st.lock().unwrap();
-            let total_ms = st.asst_bytes.get(item).copied().unwrap_or(0) * 1000 / (audio::RATE as u64 * 2);
-            let ratio = if total_ms == 0 { 0.0 } else { *played_ms as f64 / total_ms as f64 };
-            st.interrupted_ratio.insert(item.clone(), ratio);
-            if let Some(tid) = st.asst_items.get(item).cloned() {
-                if let Some(t) = st.turns.get(&tid).cloned() {
-                    drop(st);
-                    let mut t = t;
-                    t.interrupted = true;
-                    t.spoken_text = Some(spoken_prefix(&t.text, ratio));
-                    self.save_turn(&t, true);
-                }
-            }
-        }
-        self.st.lock().unwrap().m.barge_ins += 1;
     }
 
     // ---------- audio events (audio thread) ----------
@@ -821,7 +797,6 @@ impl Live {
                 if !self.allowed() {
                     return;
                 }
-                self.barge_in();
                 let t = self.new_turn("user", "", false);
                 let mut st = self.st.lock().unwrap();
                 st.speaking_turn = Some(t.id.clone());
@@ -863,14 +838,15 @@ impl Live {
                     if let Some(tt) = st.turn_timing.get_mut(&tid) {
                         tt.1 = Some(Instant::now());
                     }
-                    st.awaiting_audio_since = Some(Instant::now());
+                    st.awaiting_reply_since = Some(Instant::now());
                 }
                 let t = self.st.lock().unwrap().turns.get(&tid).cloned();
                 if let Some(mut t) = t {
                     t.ended_at = Some(now_ms());
                     self.save_turn(&t, true);
                 }
-                self.respond_to_user();
+                // Keep the canvas current; the question only advances on "volgende".
+                self.request(Reply::Silent);
             }
             AudioEvent::SpeechDiscard => {
                 let tid = self.st.lock().unwrap().speaking_turn.take();
@@ -901,56 +877,43 @@ impl Live {
             }
             "response.created" => {
                 let id = v["response"]["id"].as_str().unwrap_or("").to_string();
-                self.st.lock().unwrap().in_flight = Some(id.clone());
-                // Conservative estimate until measured usage replaces it (cancel/close stays visible).
-                let est = Usage { text_in: 12_000, audio_in: 3_000, audio_out: MAX_OUTPUT_TOKENS, ..Default::default() };
-                self.usage(&format!("est:{id}"), &self.model, Some(&id), "estimated", &est, None);
-            }
-            "response.output_audio.delta" | "response.audio.delta" => {
-                let item = v["item_id"].as_str().unwrap_or("").to_string();
-                let Ok(pcm) = B64.decode(v["delta"].as_str().unwrap_or("")) else { return };
-                self.asst_turn(&item);
                 {
                     let mut st = self.st.lock().unwrap();
-                    if let Some(since) = st.awaiting_audio_since.take() {
-                        st.m.lat_first_audio_ms.push(since.elapsed().as_millis() as i64);
-                    }
-                    *st.asst_bytes.entry(item.clone()).or_default() += pcm.len() as u64;
-                    st.m.assistant_audio_ms += (pcm.len() as i64 / 2) * 1000 / audio::RATE as i64;
+                    st.in_flight = Some(id.clone());
+                    let kind = st.requested.pop_front().unwrap_or(Reply::Silent);
+                    st.reply_kind.insert(id.clone(), kind);
                 }
-                if self.allowed() && !self.paused.load(SeqCst) {
-                    if let Some(a) = self.audio.lock().unwrap().as_ref() {
-                        a.playback.push(&item, &pcm);
-                    }
-                }
+                // Conservative estimate until measured usage replaces it (cancel/close stays visible).
+                let est = Usage { text_in: 12_000, audio_in: 3_000, text_out: MAX_OUTPUT_TOKENS, ..Default::default() };
+                self.usage(&format!("est:{id}"), &self.model, Some(&id), "estimated", &est, None);
             }
-            "response.output_audio_transcript.delta" | "response.audio_transcript.delta" => {
+            // Text of silent canvas updates is never shown: the current question stays on screen.
+            "response.output_text.delta" | "response.output_text.done" if !self.shows_text(&v) => {}
+            "response.output_text.delta" => {
                 let item = v["item_id"].as_str().unwrap_or("").to_string();
                 let tid = self.asst_turn(&item);
                 let t = {
                     let mut st = self.st.lock().unwrap();
+                    if let Some(since) = st.awaiting_reply_since.take() {
+                        st.m.lat_first_reply_ms.push(since.elapsed().as_millis() as i64);
+                    }
                     let t = st.turns.get_mut(&tid).unwrap();
                     t.text.push_str(v["delta"].as_str().unwrap_or(""));
                     t.clone()
                 };
                 self.save_turn(&t, false);
             }
-            "response.output_audio_transcript.done" | "response.audio_transcript.done" => {
+            "response.output_text.done" => {
                 let item = v["item_id"].as_str().unwrap_or("").to_string();
                 let t = {
                     let mut st = self.st.lock().unwrap();
-                    let ratio = st.interrupted_ratio.get(&item).copied();
                     let Some(tid) = st.asst_items.get(&item).cloned() else { return };
                     let Some(t) = st.turns.get_mut(&tid) else { return };
-                    if let Some(tr) = v["transcript"].as_str() {
+                    if let Some(tr) = v["text"].as_str() {
                         t.text = tr.to_string();
                     }
                     t.is_final = true;
                     t.ended_at = Some(now_ms());
-                    if let Some(r) = ratio {
-                        t.interrupted = true;
-                        t.spoken_text = Some(spoken_prefix(&t.text, r));
-                    }
                     st.m.assistant_turns += 1;
                     st.turns.get(&tid).unwrap().clone()
                 };
@@ -961,7 +924,7 @@ impl Live {
                 let msg = v["error"]["message"].as_str().unwrap_or("onbekende fout");
                 let code = v["error"]["code"].as_str().unwrap_or("");
                 diag::log(format!("realtime error {code}: {msg}"));
-                if code.contains("cancel") || code.contains("buffer_too_small") || code == "item_truncate_invalid_item_id" {
+                if code.contains("cancel") || code.contains("buffer_too_small") {
                     return;
                 }
                 self.st.lock().unwrap().m.errors += 1;
@@ -974,6 +937,7 @@ impl Live {
                     let mut st = self.st.lock().unwrap();
                     if st.in_flight.as_deref() == Some("") {
                         st.in_flight = None;
+                        st.requested.pop_back();
                     }
                 }
             }
@@ -981,7 +945,12 @@ impl Live {
         }
     }
 
-    /// Turn id for an assistant audio item, created on first sight.
+    fn shows_text(&self, v: &Value) -> bool {
+        let id = v["response_id"].as_str().unwrap_or("");
+        self.st.lock().unwrap().reply_kind.get(id) == Some(&Reply::Ask)
+    }
+
+    /// Turn id for an assistant text item, created on first sight.
     fn asst_turn(&self, item: &str) -> String {
         if let Some(t) = self.st.lock().unwrap().asst_items.get(item) {
             return t.clone();
@@ -1011,14 +980,20 @@ impl Live {
         } else {
             self.usage(&format!("missing:{id}"), &self.model, Some(&id), "missing", &Usage::default(), None);
         }
-        let pending_user = std::mem::take(&mut self.st.lock().unwrap().needs_response);
+        let kind = self.st.lock().unwrap().reply_kind.remove(&id).unwrap_or(Reply::Silent);
         let calls: Vec<&Value> = r["output"].as_array().map(|a| a.iter().filter(|o| o["type"] == "function_call").collect()).unwrap_or_default();
-        if calls.is_empty() || status != "completed" {
-            if pending_user {
-                self.maybe_respond();
-            }
-            return;
+        if !calls.is_empty() && status == "completed" {
+            self.run_tools(&calls, kind);
         }
+        let queued = self.st.lock().unwrap().queued.take();
+        if let Some(q) = queued {
+            self.request(q);
+        }
+    }
+
+    /// Execute tool calls and let the model continue in the same mode (an Ask that only
+    /// updated the canvas still owes its question).
+    fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) {
         for c in calls {
             let out = self.run_tool(c["name"].as_str().unwrap_or(""), c["call_id"].as_str().unwrap_or(""), c["arguments"].as_str().unwrap_or("{}"));
             self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
@@ -1029,8 +1004,8 @@ impl Live {
             st.tool_followups += 1;
             st.tool_followups <= MAX_TOOL_FOLLOWUPS
         };
-        if follow || pending_user {
-            self.maybe_respond();
+        if follow {
+            self.request(kind);
         }
     }
 
@@ -1150,6 +1125,9 @@ impl Live {
                     }
                 }
                 self.save_turn(&t, true);
+                if prompt::is_next_command(&t.text) {
+                    self.next_question();
+                }
                 let item = v["item_id"].as_str().unwrap_or("");
                 if let Some(u) = ledger::parse_transcription_usage(&v["usage"]) {
                     self.usage(&format!("tr:{item}"), models::TRANSCRIBE, None, "measured", &u, Some(&format!("trest:{item}")));
@@ -1180,7 +1158,7 @@ impl Live {
 
     pub fn set_mute(&self, m: bool) {
         self.muted.store(m, SeqCst);
-        self.gate.capture.store(!m && !self.paused.load(SeqCst), SeqCst);
+        self.capture.store(!m && !self.paused.load(SeqCst), SeqCst);
         self.emit_snapshot();
     }
 
@@ -1188,8 +1166,8 @@ impl Live {
         if self.paused.swap(true, SeqCst) {
             return;
         }
-        self.gate.capture.store(false, SeqCst);
-        self.barge_in(); // pause cancels running output
+        self.capture.store(false, SeqCst);
+        self.cancel_response();
         self.st.lock().unwrap().pause_started = Some(now_ms());
         self.set_status("PAUSED");
     }
@@ -1213,7 +1191,7 @@ impl Live {
                 return Err(self.fail_connect(e));
             }
         }
-        self.gate.capture.store(!self.muted.load(SeqCst), SeqCst);
+        self.capture.store(!self.muted.load(SeqCst), SeqCst);
         if let Some(a) = self.audio.lock().unwrap().as_ref() {
             a.reset_vad.store(true, SeqCst);
         }
@@ -1232,7 +1210,6 @@ impl Live {
         if self.paused.load(SeqCst) {
             return Err("Hervat de sessie eerst".into());
         }
-        self.barge_in();
         let t = self.new_turn("user", text, true);
         if !self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
             "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
@@ -1245,10 +1222,14 @@ impl Live {
             st.m.user_turns += 1;
             st.m.text_turns += 1;
             st.tool_followups = 0;
-            st.awaiting_audio_since = Some(Instant::now());
+            st.awaiting_reply_since = Some(Instant::now());
         }
         self.save_turn(&t, true);
-        self.respond_to_user();
+        if prompt::is_next_command(text) {
+            self.next_question();
+        } else {
+            self.request(Reply::Silent);
+        }
         Ok(())
     }
 
@@ -1269,7 +1250,7 @@ impl Live {
         if self.closing.swap(true, SeqCst) {
             return;
         }
-        self.gate.close_all();
+        self.capture.store(false, SeqCst);
         self.close_streams();
         {
             let d = self.db.lock().unwrap();
@@ -1295,7 +1276,7 @@ impl Live {
         for (k, mut arr) in [
             ("FirstDelta", metrics.lat_first_delta_ms.clone()),
             ("FinalTranscript", metrics.lat_final_transcript_ms.clone()),
-            ("FirstAudio", metrics.lat_first_audio_ms.clone()),
+            ("FirstReply", metrics.lat_first_reply_ms.clone()),
         ] {
             v[format!("p50{k}Ms")] = json!(pct(&mut arr, 0.5));
             v[format!("p95{k}Ms")] = json!(pct(&mut arr, 0.95));
@@ -1335,13 +1316,4 @@ pub async fn test_models(key: &str, ids: &[&str]) -> Vec<(String, Result<(), Str
         out.push((id.to_string(), res));
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn spoken_prefix_cuts_on_word() {
-        assert_eq!(super::spoken_prefix("Wat is de baseline van die KPI?", 0.5), "Wat is de");
-        assert_eq!(super::spoken_prefix("Kort", 1.0), "Kort");
-    }
 }

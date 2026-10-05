@@ -15,6 +15,8 @@ export const STATUS_LABEL: Record<FieldStatus, string> = {
   PARKED: "Geparkeerd",
 };
 
+export const NOTE_LABEL: Record<Note["kind"], string> = { assumption: "Aanname", challenge: "Kritische vraag" };
+
 export interface FieldDef { key: string; label: string; domain: string }
 export interface StepDef { key: string; label: string; question: string; domains: string[]; fields: FieldDef[] }
 
@@ -28,7 +30,7 @@ export interface StepCompletion { step: string; synthesis: string; confirmationT
 export interface Canvas { items: CanvasItem[]; notes: Note[]; decisions: Decision[]; completed: StepCompletion[] }
 /** Canvas plus step state derived natively (the rules live only in Rust). */
 export interface StepView { step: string; status: "niet gestart" | "actief" | "voldoende uitgewerkt" | "open punten"; missing: string[] }
-export interface CanvasView { canvas: Canvas; steps: StepView[]; activeStep: string | null }
+export interface CanvasView { canvas: Canvas; steps: StepView[]; activeStep: string | null; story: string[] }
 
 export interface Turn {
   id: string; sessionId: string; seq: number; providerItemId: string | null; speaker: "user" | "assistant";
@@ -66,9 +68,9 @@ export interface Settings {
 }
 
 export interface Snapshot {
-  sessionId: string; status: SessionStatus; remainingMs: number; elapsedMs: number; costUsd: string; costIncomplete: boolean;
-  budgetUsd: string; voiceState: string; connection: string; muted: boolean; paused: boolean; model: string; phase: string;
-  userTurns: number; audioInSecs: number; audioOutSecs: number;
+  sessionId: string; status: SessionStatus; costUsd: string; costIncomplete: boolean;
+  budgetUsd: string; voiceState: string; connection: string; muted: boolean; paused: boolean; model: string;
+  userTurns: number; audioInSecs: number;
 }
 
 export interface AppStatus {
@@ -85,10 +87,9 @@ export const api = {
   saveKey: (key: string) => invoke<string>("save_key", { key }),
   deleteKey: () => invoke<void>("delete_key"),
   testConnection: (profile: string) => invoke<{ model: string; ok: boolean; error: string | null }[]>("test_connection", { profile }),
-  audioDevices: () => invoke<{ inputs: Device[]; outputs: Device[] }>("audio_devices"),
-  micTestStart: (input: string | null, output: string | null) => invoke<void>("mic_test_start", { input, output }),
+  audioDevices: () => invoke<Device[]>("audio_devices"),
+  micTestStart: (input: string | null) => invoke<void>("mic_test_start", { input }),
   micTestStop: () => invoke<void>("mic_test_stop"),
-  speakerTest: () => invoke<void>("speaker_test"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
   getPricing: () => invoke<{ pricing: any; ageDays: number | null; stale: boolean; overridden: boolean; bundled: any }>("get_pricing"),
@@ -101,6 +102,7 @@ export const api = {
   stopSession: (id: string) => invoke<void>("stop_session", { id }),
   setMute: (id: string, muted: boolean) => invoke<void>("set_mute", { id, muted }),
   sendText: (id: string, text: string) => invoke<void>("send_text", { id, text }),
+  nextQuestion: (id: string) => invoke<void>("next_question", { id }),
   switchInput: (id: string, device: string | null) => invoke<void>("switch_input", { id, device }),
   liveSnapshot: () => invoke<Snapshot | null>("live_snapshot"),
   listSessions: (query: string, status: string, from: number | null, to: number | null) =>

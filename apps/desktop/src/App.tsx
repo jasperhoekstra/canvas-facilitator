@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, on, type AppStatus, type CanvasView, type Notice, type Session, type Snapshot, type StepDef, type Turn } from "./api";
-import { clock, STOP_REASON_LABEL, usd } from "./format";
+import { STOP_REASON_LABEL, usd } from "./format";
 import { Costs } from "./components/Costs";
 import { History } from "./components/History";
 import { LiveView } from "./components/LiveView";
@@ -10,7 +10,7 @@ import { SettingsPage } from "./components/Settings";
 import { Setup } from "./components/Setup";
 
 type View = "session" | "history" | "costs" | "settings";
-const EMPTY: CanvasView = { canvas: { items: [], notes: [], decisions: [], completed: [] }, steps: [], activeStep: null };
+const EMPTY: CanvasView = { canvas: { items: [], notes: [], decisions: [], completed: [] }, steps: [], activeStep: null, story: [] };
 const LIVE_STATES = ["CONNECTING", "ACTIVE", "PAUSED", "FINALIZING"];
 
 export function App() {
@@ -52,6 +52,7 @@ export function App() {
     refresh().then(() => {});
     api.canvasDefinition().then(setSteps);
     const subs = [
+      // The backend only emits changed snapshots.
       on<Snapshot>("live", (s) => s.sessionId === sid.current && setSnap(s)),
       on<{ sessionId: string; view: CanvasView }>("canvas", (c) => c.sessionId === sid.current && setCView(c.view)),
       on<Turn>("turn", (t) => {
@@ -108,7 +109,6 @@ export function App() {
   }
 
   const live = snap && LIVE_STATES.includes(snap.status) ? snap : null;
-  const lowTime = live && live.remainingMs <= 180_000;
   const nav = (v: View) => {
     setView(v);
     setDetail(null);
@@ -127,10 +127,6 @@ export function App() {
             <span className={`pill ${live.connection === "verbonden" ? "turq" : "yellow"}`} aria-label={`Verbinding: ${live.connection}`}>
               {live.connection === "verbonden" ? "●" : "◌"} {live.connection}
             </span>
-            <span className={`pill ${lowTime ? "yellow" : ""}`} role="timer" aria-label={`Resterende tijd ${clock(live.remainingMs)}`}>
-              Resterend <span className="timer">{clock(live.remainingMs)}</span>
-              {live.phase === "SYNTH" && " · synthese"}
-            </span>
             <span className="pill" aria-label="Geschatte kosten">
               Kosten ~{usd(live.costUsd)}{live.costIncomplete ? "*" : ""} / {usd(live.budgetUsd)}
             </span>
@@ -148,7 +144,7 @@ export function App() {
       </header>
 
       {view === "session" && live && !detail ? (
-        <LiveView steps={steps} snap={live} view={cview} setView={setCView} turns={turns} setTurns={setTurns} onError={onError} />
+        <LiveView title={title} steps={steps} snap={live} view={cview} setView={setCView} turns={turns} setTurns={setTurns} onError={onError} />
       ) : (
         <main>
           {detail ? (

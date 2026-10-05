@@ -164,7 +164,7 @@ pub fn within_budget(spent: Decimal, reserve: Decimal, budget: Decimal) -> bool 
 /// Conservative pre-response reservation (PRD §10.1): bounded output plus generous input and
 /// a minute of transcription.
 pub fn reservation(pricing: &Pricing, model: &str, transcribe_model: &str, max_output_tokens: i64) -> Decimal {
-    let u = Usage { text_in: 12_000, audio_in: 3_000, audio_out: max_output_tokens, ..Default::default() };
+    let u = Usage { text_in: 12_000, audio_in: 3_000, text_out: max_output_tokens, ..Default::default() };
     let t = Usage { billed_seconds: Some(Decimal::from(60)), ..Default::default() };
     cost(pricing, model, &u).unwrap_or(Decimal::ONE) + cost(pricing, transcribe_model, &t).unwrap_or(Decimal::ZERO)
 }

@@ -1,0 +1,55 @@
+name: Build desktop (unsigned test builds)
+# Unsigned builds for demos/testing: a portable Windows .exe and a universal macOS .dmg.
+# Signed, notarized releases go through release.yml.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/presentation-mode]
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/desktop/package-lock.json }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: apps/desktop/src-tauri }
+      - run: npm ci
+        working-directory: apps/desktop
+      # Ad-hoc signature ("-"): required to run on Apple Silicon; not notarized.
+      - run: npx tauri build --target universal-apple-darwin --bundles dmg --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+        working-directory: apps/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-facilitator-macos-universal
+          path: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Strawberry Perl for vendored OpenSSL (SQLCipher)
+        shell: pwsh
+        run: '"PERL=C:\Strawberry\perl\bin\perl.exe" | Out-File -Append $env:GITHUB_ENV'
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/desktop/package-lock.json }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: apps/desktop/src-tauri }
+      - run: npm ci
+        working-directory: apps/desktop
+      - run: npx tauri build --no-bundle
+        working-directory: apps/desktop
+      - shell: pwsh
+        run: Copy-Item apps/desktop/src-tauri/target/release/canvas-facilitator.exe "Canvas Facilitator.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-facilitator-windows-x64
+          path: Canvas Facilitator.exe
+          if-no-files-found: error

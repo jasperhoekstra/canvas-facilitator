@@ -15,7 +15,7 @@ export function date(ms: number | null | undefined): string {
 
 export function duration(s: { startedAt: number | null; endedAt: number | null }): string {
   if (!s.startedAt) return "–";
-  return clock(Math.min(900_000, (s.endedAt ?? Date.now()) - s.startedAt));
+  return clock((s.endedAt ?? Date.now()) - s.startedAt);
 }
 
 export const SESSION_STATUS_LABEL: Record<string, string> = {
@@ -30,7 +30,7 @@ export const SESSION_STATUS_LABEL: Record<string, string> = {
 };
 
 export const STOP_REASON_LABEL: Record<string, string> = {
-  deadline: "15 minuten bereikt",
+  deadline: "maximale sessieduur (4 uur) bereikt",
   gebruiker: "gestopt door jou",
   budget: "budget bereikt",
   netwerk: "netwerk",

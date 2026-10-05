@@ -35,7 +35,7 @@ export function NewSession({ settings, recoverable, parent, onStarted, onError }
       {recoverable.length > 0 && (
         <div className="panel" role="region" aria-label="Herstelbare sessies">
           <h2>Onderbroken sessie hervatten</h2>
-          <p className="hint">De tijd liep door tijdens de onderbreking. Hervatten kan alleen binnen de oorspronkelijke 15 minuten.</p>
+          <p className="hint">Deze sessie werd onderbroken (bijvoorbeeld door een herstart) en kan worden voortgezet.</p>
           {recoverable.map((s) => (
             <div key={s.id} className="row" style={{ justifyContent: "space-between" }}>
               <span>{s.title} · gestart {date(s.startedAt)}</span>
@@ -78,11 +78,11 @@ export function NewSession({ settings, recoverable, parent, onStarted, onError }
         </p>
         <div className="panel" style={{ background: "rgba(12,19,38,0.6)" }}>
           <p>
-            <strong>Duur: maximaal 15 minuten</strong>, inclusief pauzes. Vanaf 13:30 rondt de facilitator af; op 15:00 sluit de app de verbinding.
+            <strong>Geen tijdslimiet.</strong> Jij vertelt, de facilitator luistert, schrijft het canvas mee en stelt zijn vragen als tekst op het scherm. Rond af wanneer je klaar bent.
           </p>
           {est && (
             <p>
-              Indicatie: ~{usd(est.low)} – {usd(est.high)} per kwartier met {est.model} (aannames uit het PRD; geen maximum).
+              Indicatie: ~{usd(est.low)} – {usd(est.high)} per kwartier presenteren met {est.model} (indicatie, geen maximum).
             </p>
           )}
           <p>Je sessie wordt lokaal opgeslagen. Je audio en gesprekscontext worden voor verwerking naar OpenAI verstuurd.</p>

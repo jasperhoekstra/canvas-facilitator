@@ -54,7 +54,7 @@ pub fn markdown(s: &SessionRow, c: &Canvas, turns: Option<&[Turn]>, cost: &CostS
     let mut o = String::new();
     o.push_str(&format!("# {}\n\n", s.title));
     let duration = match (s.started_at, s.ended_at) {
-        (Some(a), Some(b)) => dur((b - a).min(900_000)),
+        (Some(a), Some(b)) => dur(b - a),
         _ => "-".into(),
     };
     o.push_str(&format!(
@@ -99,7 +99,11 @@ pub fn markdown(s: &SessionRow, c: &Canvas, turns: Option<&[Turn]>, cost: &CostS
         }
         o.push_str("\n\n");
     }
-    o.push_str("## Besluiten en acties\n\n");
+    o.push_str("## Het verhaal\n\n");
+    for (st, line) in STEPS.iter().zip(c.story()) {
+        o.push_str(&format!("- **{}** — {line}\n", st.key));
+    }
+    o.push_str("\n## Besluiten en acties\n\n");
     if c.decisions.is_empty() {
         o.push_str("- Eerste actie: nog te bepalen\n");
     }
@@ -176,10 +180,10 @@ pub fn costs_csv(rows: &[UsageRow]) -> String {
 
 pub fn metrics_csv(sessions: &[(SessionRow, CostSummary)]) -> String {
     let keys = [
-        "elapsedMs", "pausedMs", "userSpeechMs", "assistantAudioMs", "streamedAudioSecs", "userTurns", "assistantTurns",
-        "textTurns", "responses", "cancelledResponses", "toolCalls", "toolRejections", "bargeIns", "reconnects", "errors",
+        "elapsedMs", "pausedMs", "userSpeechMs", "streamedAudioSecs", "userTurns", "assistantTurns",
+        "textTurns", "responses", "cancelledResponses", "toolCalls", "toolRejections", "reconnects", "errors",
         "transcriptFailures", "p50FirstDeltaMs", "p95FirstDeltaMs", "p50FinalTranscriptMs", "p95FinalTranscriptMs",
-        "p50FirstAudioMs", "p95FirstAudioMs", "promptVersion",
+        "p50FirstReplyMs", "p95FirstReplyMs", "promptVersion",
     ];
     let mut o = format!("sessie,titel,status,stopreden,model,prijsversie,kosten_usd,kosten_onvolledig,{}\n", keys.join(","));
     for (s, c) in sessions {

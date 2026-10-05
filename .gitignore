@@ -26,3 +26,4 @@ Thumbs.db
 apps/desktop/*.log
 apps/desktop/screenshots/
 fac-report-*.json
+release/

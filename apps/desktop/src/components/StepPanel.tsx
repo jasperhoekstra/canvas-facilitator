@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, errText, FIELD_STATUSES, STATUS_LABEL, type Canvas, type CanvasView, type FieldStatus, type StepDef } from "../api";
+import { api, errText, FIELD_STATUSES, NOTE_LABEL, STATUS_LABEL, type Canvas, type CanvasView, type FieldStatus, type StepDef } from "../api";
 
 function FieldEditor({ sessionId, step, f, canvas, onChange }: {
   sessionId: string; step: string; f: StepDef["fields"][number]; canvas: Canvas; onChange: (v: CanvasView) => void;
@@ -98,7 +98,7 @@ export function StepPanel({ steps, step, view, sessionId, onChange, onClose }: {
         <ul>
           {notes.map((n) => (
             <li key={n.id} className="row" style={{ justifyContent: "space-between" }}>
-              <span><strong>{n.kind === "assumption" ? "Aanname" : "Challenge"}:</strong> {n.text}</span>
+              <span><strong>{NOTE_LABEL[n.kind]}:</strong> {n.text}</span>
               <button className="btn small ghost" aria-label="Verwijder" onClick={async () => onChange(await api.deleteNote(sessionId, n.id))}>✕</button>
             </li>
           ))}
