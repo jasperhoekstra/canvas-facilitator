@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-deepen"
+description = "Enables the deepen command without any pre-configured scope."
+commands.allow = ["deepen"]
+
+[[permission]]
+identifier = "deny-deepen"
+description = "Denies the deepen command without any pre-configured scope."
+commands.deny = ["deepen"]

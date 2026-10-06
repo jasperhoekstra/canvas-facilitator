@@ -792,9 +792,9 @@ mod tests {
         session(&db, "s1");
         let c = db.canvas("s1").unwrap();
         let ctx = ToolCtx { last_user_turn: Some("t1".into()), now: 1 };
-        let m = crate::canvas::validate("update_canvas_item", &json!({"step":"MEET","field":"kpi","value":"Doorlooptijd","status":"PARTIAL","expected_revision":0}), &c, &ctx).unwrap();
-        db.apply("s1", &m, Some(("call1", "update_canvas_item", true, "ok"))).unwrap();
-        assert!(db.apply("s1", &m, Some(("call1", "update_canvas_item", true, "ok"))).is_err(), "same call id cannot apply twice");
+        let m = crate::canvas::validate(crate::canvas::FILL, &json!({"field":"kpi","value":"Doorlooptijd"}), &c, &ctx).unwrap();
+        db.apply("s1", &m, Some(("call1", crate::canvas::FILL, true, "ok"))).unwrap();
+        assert!(db.apply("s1", &m, Some(("call1", crate::canvas::FILL, true, "ok"))).is_err(), "same call id cannot apply twice");
         assert_eq!(db.tool_result("call1"), Some((true, "ok".into())));
         assert_eq!(db.canvas("s1").unwrap().items.len(), 1);
         db.upsert_turn(&Turn { id: "t1".into(), session_id: "s1".into(), seq: 1, provider_item_id: None, speaker: "user".into(), started_at: 1, ended_at: Some(2), text: "hallo".into(), is_final: true, interrupted: false, failed: false, spoken_text: None, original_text: None, corrected_at: None }).unwrap();

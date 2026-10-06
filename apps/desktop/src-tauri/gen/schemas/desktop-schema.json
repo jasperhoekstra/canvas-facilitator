@@ -231,6 +231,12 @@
           "markdownDescription": "Enables the create_session command without any pre-configured scope."
         },
         {
+          "description": "Enables the deepen command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-deepen",
+          "markdownDescription": "Enables the deepen command without any pre-configured scope."
+        },
+        {
           "description": "Enables the delete_key command without any pre-configured scope.",
           "type": "string",
           "const": "allow-delete-key",
@@ -331,12 +337,6 @@
           "type": "string",
           "const": "allow-pause-session",
           "markdownDescription": "Enables the pause_session command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the refill_field command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-refill-field",
-          "markdownDescription": "Enables the refill_field command without any pre-configured scope."
         },
         {
           "description": "Enables the rename_session command without any pre-configured scope.",
@@ -459,6 +459,12 @@
           "markdownDescription": "Denies the create_session command without any pre-configured scope."
         },
         {
+          "description": "Denies the deepen command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-deepen",
+          "markdownDescription": "Denies the deepen command without any pre-configured scope."
+        },
+        {
           "description": "Denies the delete_key command without any pre-configured scope.",
           "type": "string",
           "const": "deny-delete-key",
@@ -559,12 +565,6 @@
           "type": "string",
           "const": "deny-pause-session",
           "markdownDescription": "Denies the pause_session command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the refill_field command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-refill-field",
-          "markdownDescription": "Denies the refill_field command without any pre-configured scope."
         },
         {
           "description": "Denies the rename_session command without any pre-configured scope.",

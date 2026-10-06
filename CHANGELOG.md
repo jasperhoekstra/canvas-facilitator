@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 — 2026-10-07 (niet gesigneerd)
+
+- Eenvoudiger flow. Weg uit het verhaalscherm: vakjes opnieuw invullen, statussen (geparkeerd, aanname, …), aannames/kritische vragen, stapbevestiging en `question_answered`. Het model heeft nog vier tools: `vul_vakje`, `nieuwe_vraag`, `nieuwe_inspiratie`, `mark_decision`.
+- Een nieuwe vraag komt in één keer met nieuwe inspiratie en de gloeiende vakjes (één geforceerde tool-aanroep in plaats van tekst plus een aparte inspiratieronde).
+- Niet meer zelf doorschakelen: is de vraag beantwoord, dan verschijnt "✓ Beantwoord — druk N" (of "KIES is rond — druk N om door te gaan naar MEET"); het hoofdstuk blijft in beeld tot `N`. Bij een half antwoord volgt automatisch een verdiepings- of challengevraag (max. 2). "Sla over" of "weet ik niet" zeggen, of `N`, gaat door; `D` vraagt zelf door.
+
 ## 1.0.1 — 2026-10-06 (niet gesigneerd)
 
 - Bijna realtime vullen: tijdens lang praten wordt na ±4 s bij een korte adempauze (uiterlijk na 8 s) tussentijds verwerkt; einde van een beurt na 500 ms stilte (was 700 ms). Canvasupdates worden per tool-aanroep toegepast zodra die compleet is, niet pas aan het eind van de AI-response.

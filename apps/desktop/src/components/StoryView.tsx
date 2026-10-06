@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { NOTE_LABEL, STATUS_LABEL, type CanvasView, type FieldRef, type Guide, type StepDef, type Turn } from "../api";
+import { type CanvasView, type FieldRef, type Guide, type StepDef, type Turn } from "../api";
 import { ACCENT } from "./Board";
 
 /** Story line: the chapters, the one in focus highlighted. */
@@ -25,14 +25,9 @@ function Rail({ steps, view, focus, onPick }: { steps: StepDef[]; view: CanvasVi
   );
 }
 
-/** One chapter: the step's fields fill in as the story is told. Tiles the current question is
- *  about glow; clicking a tile asks to fill it in again. */
-function Chapter({ s, idx, total, view, working, refill, onRefill }: {
-  s: StepDef; idx: number; total: number; view: CanvasView; working: FieldRef[]; refill: FieldRef | null;
-  onRefill?: (step: string, field: string) => void;
-}) {
+/** One chapter: the step's tiles fill in as the story is told; the ones the question is about glow. */
+function Chapter({ s, idx, total, view, working }: { s: StepDef; idx: number; total: number; view: CanvasView; working: FieldRef[] }) {
   const c = view.canvas;
-  const notes = c.notes.filter((n) => n.step === s.key);
   return (
     <section className={`chapter ${ACCENT[idx]}`} aria-live="polite">
       <div className="chapter-kicker">Hoofdstuk {idx + 1} van {total} · {s.domains.join(" · ")}</div>
@@ -41,46 +36,26 @@ function Chapter({ s, idx, total, view, working, refill, onRefill }: {
       <div className="tiles">
         {s.fields.map((f) => {
           const it = c.items.find((i) => i.step === s.key && i.field === f.key && i.value.trim());
-          const isRefill = refill?.step === s.key && refill.field === f.key;
-          const glow = isRefill || working.some((w) => w.step === s.key && w.field === f.key);
+          const glow = working.some((w) => w.step === s.key && w.field === f.key);
           // The fill-in animation plays when the tile switches from empty to filled.
           return (
-            <button
-              key={f.key}
-              type="button"
-              className={`tile ${it ? "filled" : "empty"} ${glow ? "working" : ""}`}
-              disabled={!onRefill}
-              onClick={() => onRefill?.(s.key, f.key)}
-              title="Klik om dit vakje opnieuw in te vullen"
-              aria-label={`${f.label}: ${it ? it.value : "nog open"}. Opnieuw invullen`}
-            >
-              <div className="tile-label">
-                {f.label}
-                {it && <span className={`st st-${it.status}`}>{STATUS_LABEL[it.status]}</span>}
-                {isRefill && <span className="refill-tag">opnieuw</span>}
-              </div>
+            <div key={f.key} className={`tile ${it ? "filled" : "empty"} ${glow ? "working" : ""}`}>
+              <div className="tile-label">{f.label}</div>
               <div className="tile-value">{it ? it.value : "nog open"}</div>
-            </button>
+            </div>
           );
         })}
       </div>
-      {notes.length > 0 && (
-        <div className="chips">
-          {notes.map((n) => (
-            <span key={n.id} className={`chip ${n.kind}`}>{NOTE_LABEL[n.kind]}: {n.text}</span>
-          ))}
-        </div>
-      )}
     </section>
   );
 }
 
 /** Presentation mode: chapter in focus, the facilitator's question as a quote, live subtitles.
  *  `focus` is driven by LiveView (auto-follows the active step unless the presenter navigates). */
-export const StoryView = memo(function StoryView({ title, steps, view, turns, thinking, focus, following, onPick, onFollow, onNext, guide, refill, onInspire, onRefill }: {
+export const StoryView = memo(function StoryView({ title, steps, view, turns, thinking, focus, following, onPick, onFollow, onNext, guide, ready, onInspire, onDeepen }: {
   title: string; steps: StepDef[]; view: CanvasView; turns: Turn[]; thinking: boolean; focus: number; following: boolean;
   onPick: (i: number) => void; onFollow: () => void; onNext: () => void;
-  guide: Guide | null; refill: FieldRef | null; onInspire: () => void; onRefill?: (step: string, field: string) => void;
+  guide: Guide | null; ready: string | null; onInspire: () => void; onDeepen: () => void;
 }) {
   if (!steps.length) return null;
   const questions = turns.filter((t) => t.speaker === "assistant" && t.text.trim());
@@ -108,7 +83,7 @@ export const StoryView = memo(function StoryView({ title, steps, view, turns, th
       <div className="story-main">
         <Chapter
           key={steps[focus].key} s={steps[focus]} idx={focus} total={steps.length} view={view}
-          working={guide?.fields ?? []} refill={refill} onRefill={onRefill}
+          working={guide?.fields ?? []}
         />
         <aside className="voice">
           <div className="voice-kicker">De facilitator vraagt</div>
@@ -122,8 +97,15 @@ export const StoryView = memo(function StoryView({ title, steps, view, turns, th
               <ul>{guide.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
             </div>
           )}
+          {ready && (
+            <button className="ready" onClick={onNext} aria-live="polite">
+              ✓ {ready === "vraag" ? "Beantwoord" : ready === "einde" ? "Alle stappen zijn rond" : `${steps[steps.findIndex((s) => s.key === ready) - 1]?.key ?? "Dit hoofdstuk"} is rond`}
+              {" — "}druk <kbd>N</kbd>{ready === "vraag" ? " voor de volgende vraag" : ready === "einde" ? " voor de afronding" : ` om door te gaan naar ${ready}`}
+            </button>
+          )}
           <div className="hints">
             <button className="next-hint" onClick={onNext}><kbd>N</kbd> volgende vraag</button>
+            <button className="next-hint" onClick={onDeepen}><kbd>D</kbd> doorvragen</button>
             <button className="next-hint" onClick={onInspire}><kbd>I</kbd> nieuw voorstel</button>
           </div>
           {said && (

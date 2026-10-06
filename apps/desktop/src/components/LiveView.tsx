@@ -44,7 +44,9 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
   const [idle, setIdle] = useState(false);
   // Story focus: follows the active step until the presenter navigates (←/→ or the rail).
   const [pinned, setPinned] = useState<number | null>(null);
-  const activeIdx = Math.max(0, steps.findIndex((s) => s.key === view.activeStep));
+  // A finished chapter stays on screen until the presenter moves on (N).
+  const readyIdx = steps.findIndex((s) => s.key === snap.ready);
+  const activeIdx = readyIdx > 0 ? readyIdx - 1 : Math.max(0, steps.findIndex((s) => s.key === view.activeStep));
   const focus = pinned ?? activeIdx;
   const focusRef = useRef(focus);
   focusRef.current = focus;
@@ -63,8 +65,8 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
   const inspire = useCallback(() => {
     api.inspire(id).catch((e) => onError(errText(e)));
   }, [id, onError]);
-  const refill = useCallback((step: string, field: string) => {
-    api.refillField(id, step, field).catch((e) => onError(errText(e)));
+  const deepen = useCallback(() => {
+    api.deepen(id).catch((e) => onError(errText(e)));
   }, [id, onError]);
 
   useEffect(() => {
@@ -99,6 +101,8 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
       }
       // "I": a fresh round of inspiration/proposals next to the question.
       if (key === "i") inspire();
+      // "D": dig deeper or challenge the current answer.
+      if (key === "d") deepen();
       if (key === "t") setShowTranscript((s) => !s);
       if (key === "l") setPinned(null);
       if (key === "arrowright") setPinned(Math.min(last, focusRef.current + 1));
@@ -106,7 +110,7 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  }, [last, next, inspire]);
+  }, [last, next, inspire, deepen]);
 
   const pick = useCallback((i: number) => setPinned(i === activeIdx ? null : i), [activeIdx]);
   const follow = useCallback(() => setPinned(null), []);
@@ -120,7 +124,7 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
         <StoryView
           title={title} steps={steps} view={view} turns={turns} thinking={snap.voiceState === "denkt"}
           focus={focus} following={pinned === null || pinned === activeIdx} onPick={pick} onFollow={follow} onNext={next}
-          guide={snap.guide} refill={snap.refill} onInspire={inspire} onRefill={ended ? undefined : refill}
+          guide={snap.guide} ready={snap.ready} onInspire={inspire} onDeepen={deepen}
         />
       ) : (
         <div className="overview">
