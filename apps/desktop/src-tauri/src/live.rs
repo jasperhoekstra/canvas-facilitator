@@ -154,7 +154,8 @@ pub struct Live {
 }
 
 /// What a model response may do: silently update the canvas, or also show the next question.
-/// Questions only advance when the presenter asks for it ("volgende", button, N/PageDown).
+/// Questions advance when the model judges the current one answered (`question_answered`)
+/// or when the presenter presses the button, N or PageDown.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Reply {
     Silent,
@@ -775,7 +776,7 @@ impl Live {
         }
     }
 
-    /// Presenter asked for the next question (button, key or saying "volgende").
+    /// Move on to the next question (button, N/PageDown, or the model's `question_answered`).
     pub fn next_question(self: &Arc<Self>) {
         self.st.lock().unwrap().tool_followups = 0;
         self.request(Reply::Ask);
@@ -845,7 +846,7 @@ impl Live {
                     t.ended_at = Some(now_ms());
                     self.save_turn(&t, true);
                 }
-                // Keep the canvas current; the question only advances on "volgende".
+                // Keep the canvas current; the model advances via question_answered once answered.
                 self.request(Reply::Silent);
             }
             AudioEvent::SpeechDiscard => {
@@ -994,10 +995,22 @@ impl Live {
     /// Execute tool calls and let the model continue in the same mode (an Ask that only
     /// updated the canvas still owes its question).
     fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) {
+        let mut answered = false;
         for c in calls {
-            let out = self.run_tool(c["name"].as_str().unwrap_or(""), c["call_id"].as_str().unwrap_or(""), c["arguments"].as_str().unwrap_or("{}"));
+            let name = c["name"].as_str().unwrap_or("");
+            let out = if name == canvas::QUESTION_ANSWERED {
+                // Only a silent update can move on; an Ask is already writing the next question.
+                answered |= kind == Reply::Silent;
+                json!({"ok": true}).to_string()
+            } else {
+                self.run_tool(name, c["call_id"].as_str().unwrap_or(""), c["arguments"].as_str().unwrap_or("{}"))
+            };
             self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
                 "type": "function_call_output", "call_id": c["call_id"], "output": out}}));
+        }
+        if answered {
+            self.next_question();
+            return;
         }
         let follow = {
             let mut st = self.st.lock().unwrap();
@@ -1125,9 +1138,6 @@ impl Live {
                     }
                 }
                 self.save_turn(&t, true);
-                if prompt::is_next_command(&t.text) {
-                    self.next_question();
-                }
                 let item = v["item_id"].as_str().unwrap_or("");
                 if let Some(u) = ledger::parse_transcription_usage(&v["usage"]) {
                     self.usage(&format!("tr:{item}"), models::TRANSCRIBE, None, "measured", &u, Some(&format!("trest:{item}")));
@@ -1225,11 +1235,7 @@ impl Live {
             st.awaiting_reply_since = Some(Instant::now());
         }
         self.save_turn(&t, true);
-        if prompt::is_next_command(text) {
-            self.next_question();
-        } else {
-            self.request(Reply::Silent);
-        }
+        self.request(Reply::Silent);
         Ok(())
     }
 

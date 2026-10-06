@@ -97,6 +97,8 @@ pub const STEPS: [StepDef; 5] = [
 
 pub const STATUSES: [&str; 7] = ["UNKNOWN", "PARTIAL", "ASSUMPTION", "VALIDATED", "CONTRADICTED", "DECIDED", "PARKED"];
 pub const MAX_TEXT: usize = 500;
+/// Signal tool (no canvas mutation): the question on screen is answered well enough to move on.
+pub const QUESTION_ANSWERED: &str = "question_answered";
 
 pub fn step_def(step: &str) -> Option<&'static StepDef> {
     STEPS.iter().find(|s| s.key == step)
@@ -569,7 +571,10 @@ pub fn tool_schemas() -> Value {
         {"type": "function", "name": "complete_step",
          "description": "Markeer een stap als voldoende uitgewerkt, alleen nadat de gebruiker de synthese expliciet bevestigde.",
          "parameters": {"type": "object", "additionalProperties": false, "required": ["step", "synthesis", "user_confirmed"],
-            "properties": {"step": {"type": "string", "enum": steps}, "synthesis": {"type": "string"}, "user_confirmed": {"type": "boolean"}}}}
+            "properties": {"step": {"type": "string", "enum": steps}, "synthesis": {"type": "string"}, "user_confirmed": {"type": "boolean"}}}},
+        {"type": "function", "name": QUESTION_ANSWERED,
+         "description": "De vraag op het scherm is voldoende beantwoord: toon de volgende vraag.",
+         "parameters": {"type": "object", "additionalProperties": false, "properties": {}}}
     ])
 }
 
