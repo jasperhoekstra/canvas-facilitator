@@ -337,6 +337,17 @@ fn next_question(st: State<AppState>, id: String) -> R<()> {
 }
 
 #[tauri::command]
+fn inspire(st: State<AppState>, id: String) -> R<()> {
+    st.live_for(&id)?.inspire();
+    Ok(())
+}
+
+#[tauri::command]
+fn refill_field(st: State<AppState>, id: String, step: String, field: String) -> R<()> {
+    st.live_for(&id)?.refill_field(&step, &field)
+}
+
+#[tauri::command]
 fn send_text(st: State<AppState>, id: String, text: String) -> R<()> {
     st.live_for(&id)?.send_text(&text)
 }
@@ -564,7 +575,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_status, retry_storage, save_key, delete_key, test_connection, audio_devices, mic_test_start, mic_test_stop,
             get_settings, save_settings, get_pricing, cost_estimate, create_session, start_session,
-            resume_session, pause_session, stop_session, set_mute, send_text, next_question, switch_input, live_snapshot, list_sessions,
+            resume_session, pause_session, stop_session, set_mute, send_text, next_question, inspire, refill_field, switch_input, live_snapshot, list_sessions,
             get_session, canvas_definition, edit_item, confirm_step, add_action, delete_note, correct_turn, rename_session,
             delete_session, cost_overview, export_session, export_costs, export_diagnostics
         ])

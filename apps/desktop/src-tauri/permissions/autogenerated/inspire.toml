@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-inspire"
+description = "Enables the inspire command without any pre-configured scope."
+commands.allow = ["inspire"]
+
+[[permission]]
+identifier = "deny-inspire"
+description = "Denies the inspire command without any pre-configured scope."
+commands.deny = ["inspire"]

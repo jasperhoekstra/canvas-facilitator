@@ -30,6 +30,8 @@
     "allow-set-mute",
     "allow-send-text",
     "allow-next-question",
+    "allow-inspire",
+    "allow-refill-field",
     "allow-switch-input",
     "allow-live-snapshot",
     "allow-list-sessions",

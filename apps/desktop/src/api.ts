@@ -67,10 +67,14 @@ export interface Settings {
   retentionDays: number | null; pricingOverride: string | null; onboarded: boolean;
 }
 
+export interface FieldRef { step: string; field: string }
+/** Shown next to the question: ideas ("inspireert") or concrete proposals ("stelt_voor"). */
+export interface Guide { kind: "inspireert" | "stelt_voor"; bullets: string[]; fields: FieldRef[] }
+
 export interface Snapshot {
   sessionId: string; status: SessionStatus; costUsd: string; costIncomplete: boolean;
   budgetUsd: string; voiceState: string; connection: string; muted: boolean; paused: boolean; model: string;
-  userTurns: number; audioInSecs: number;
+  userTurns: number; audioInSecs: number; guide: Guide | null; refill: FieldRef | null;
 }
 
 export interface AppStatus {
@@ -103,6 +107,8 @@ export const api = {
   setMute: (id: string, muted: boolean) => invoke<void>("set_mute", { id, muted }),
   sendText: (id: string, text: string) => invoke<void>("send_text", { id, text }),
   nextQuestion: (id: string) => invoke<void>("next_question", { id }),
+  inspire: (id: string) => invoke<void>("inspire", { id }),
+  refillField: (id: string, step: string, field: string) => invoke<void>("refill_field", { id, step, field }),
   switchInput: (id: string, device: string | null) => invoke<void>("switch_input", { id, device }),
   liveSnapshot: () => invoke<Snapshot | null>("live_snapshot"),
   listSessions: (query: string, status: string, from: number | null, to: number | null) =>

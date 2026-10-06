@@ -99,6 +99,48 @@ pub const STATUSES: [&str; 7] = ["UNKNOWN", "PARTIAL", "ASSUMPTION", "VALIDATED"
 pub const MAX_TEXT: usize = 500;
 /// Signal tool (no canvas mutation): the question on screen is answered well enough to move on.
 pub const QUESTION_ANSWERED: &str = "question_answered";
+/// Display tool (no canvas mutation): inspiration or proposals shown next to the question.
+pub const SHOW_GUIDE: &str = "show_guide";
+const MAX_BULLETS: usize = 4;
+
+/// A canvas field, addressed by step and key.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldRef {
+    pub step: String,
+    pub field: String,
+}
+
+/// What the facilitator shows next to its question: "inspireert" (ideas while a chapter is
+/// still open) or "stelt_voor" (concrete proposals), plus the fields the question is about.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Guide {
+    pub kind: String,
+    pub bullets: Vec<String>,
+    pub fields: Vec<FieldRef>,
+}
+
+/// Field keys are unique across steps, so a key alone identifies the field.
+pub fn field_ref(field: &str) -> Option<FieldRef> {
+    STEPS.iter().find(|s| s.fields.iter().any(|f| f.key == field)).map(|s| FieldRef { step: s.key.into(), field: field.into() })
+}
+
+pub fn parse_guide(a: &Value) -> Result<Guide, String> {
+    let kind = str_arg(a, "kind")?;
+    if !matches!(kind, "inspireert" | "stelt_voor") {
+        return Err(format!("Onbekend soort '{kind}'"));
+    }
+    let strings = |k: &str| -> Vec<String> {
+        a.get(k).and_then(Value::as_array).map(|v| v.iter().filter_map(Value::as_str).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()).unwrap_or_default()
+    };
+    let bullets: Vec<String> = strings("bullets").into_iter().take(MAX_BULLETS).map(|b| b.chars().take(200).collect()).collect();
+    if bullets.is_empty() {
+        return Err("Geen bullets".into());
+    }
+    let fields = strings("fields").iter().filter_map(|f| field_ref(f)).take(MAX_BULLETS).collect();
+    Ok(Guide { kind: kind.into(), bullets, fields })
+}
 
 pub fn step_def(step: &str) -> Option<&'static StepDef> {
     STEPS.iter().find(|s| s.key == step)
@@ -218,9 +260,34 @@ impl Canvas {
         }
     }
 
-    /// Step of the most recent item change, used as the "Actief" step.
+    /// Fields nobody has answered yet (empty or UNKNOWN); PARKED counts as handled.
+    fn open_fields(&self, step: &str) -> Vec<&'static str> {
+        step_def(step)
+            .map(|s| s.fields)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|f| self.item(step, f.key).is_none_or(|i| i.status == "UNKNOWN" || (i.value.trim().is_empty() && i.status != "PARKED")))
+            .map(|f| f.label)
+            .collect()
+    }
+
+    /// Confirmed, or every field answered or explicitly parked: the story may move on.
+    pub fn is_handled(&self, step: &str) -> bool {
+        self.is_complete(step) || self.open_fields(step).is_empty()
+    }
+
+    /// The step the conversation is on: strictly the first one in order that is not handled.
+    /// Answers about later steps are recorded but never move the focus ahead.
+    pub fn current_step(&self) -> Option<&'static str> {
+        STEPS.iter().map(|s| s.key).find(|s| !self.is_handled(s))
+    }
+
+    /// The "Actief" step shown in the UI: the current step once the story has started.
     pub fn active_step(&self) -> Option<&str> {
-        self.items.iter().max_by_key(|i| i.updated_at).map(|i| i.step.as_str())
+        if self.items.is_empty() {
+            return None;
+        }
+        self.current_step()
     }
 
     /// Compact, traceable context for the model (PRD §11 "canvascontext").
@@ -342,23 +409,25 @@ impl Canvas {
         ]
     }
 
-    /// Where the story is: the active chapter (or the first unfinished one) and its open fields.
+    /// Where the story is: the current chapter (strict order) and its open fields.
     pub fn focus_hint(&self) -> String {
-        let step = self
-            .active_step()
-            .filter(|s| !self.is_complete(s))
-            .or_else(|| STEPS.iter().map(|s| s.key).find(|s| !self.is_complete(s)));
-        match step {
-            Some(s) => {
-                let missing = self.missing_fields(s);
-                if missing.is_empty() {
-                    format!("Hoofdstuk {s} is inhoudelijk compleet: vraag om bevestiging van de synthese of ga naar het volgende hoofdstuk.")
-                } else {
-                    format!("Huidig hoofdstuk: {s}. Nog open: {}.", missing.join(", "))
-                }
-            }
-            None => "Alle hoofdstukken zijn uitgewerkt: vraag naar het besluit en de eerste actie.".into(),
-        }
+        let Some(s) = self.current_step() else {
+            return "Alle hoofdstukken zijn uitgewerkt: vraag kort naar het besluit en de eerste actie, zonder samenvatting.".into();
+        };
+        let idx = STEPS.iter().position(|d| d.key == s).unwrap_or(0);
+        format!(
+            "Huidig hoofdstuk: {s} ({} van {}). Nog open: {}. Vraag ALLEEN naar dit hoofdstuk, niet naar latere.",
+            idx + 1,
+            STEPS.len(),
+            self.open_fields(s).join(", ")
+        )
+    }
+
+    /// Focus for a tile the presenter clicked to fill in again (any chapter).
+    pub fn refill_hint(&self, step: &str, field: &str) -> String {
+        let label = field_def(step, field).map_or(field, |f| f.label);
+        let cur = self.item(step, field).map(|i| i.value.trim()).filter(|v| !v.is_empty()).unwrap_or("leeg");
+        format!("De presentator wil '{label}' ({step}) opnieuw invullen; huidige waarde: \"{cur}\". Vraag ALLEEN daarnaar.")
     }
 
     pub fn view(&self) -> View {
@@ -474,7 +543,15 @@ pub fn validate(name: &str, a: &Value, c: &Canvas, ctx: &ToolCtx) -> Result<Muta
                 return Err("complete_step vereist dat de gebruiker de synthese expliciet heeft bevestigd (user_confirmed=true)".into());
             }
             let turn = ctx.last_user_turn.clone().ok_or("Geen bevestigende gebruikersbeurt geregistreerd")?;
-            c.complete(str_arg(a, "step")?, &opt_str(a, "synthesis"), turn, ctx.now)
+            let step = str_arg(a, "step")?;
+            // Strict order: an earlier unfinished chapter comes first.
+            if let Some(cur) = c.current_step() {
+                let pos = |k: &str| STEPS.iter().position(|d| d.key == k);
+                if pos(step) > pos(cur) {
+                    return Err(format!("Werk eerst hoofdstuk {cur} af; {step} komt later aan de beurt."));
+                }
+            }
+            c.complete(step, &opt_str(a, "synthesis"), turn, ctx.now)
         }
         other => Err(format!("Onbekende tool '{other}'")),
     }
@@ -569,9 +646,17 @@ pub fn tool_schemas() -> Value {
          "description": "Haal de actuele canvasstaat met revisies op.",
          "parameters": {"type": "object", "additionalProperties": false, "properties": {}}},
         {"type": "function", "name": "complete_step",
-         "description": "Markeer een stap als voldoende uitgewerkt, alleen nadat de gebruiker de synthese expliciet bevestigde.",
+         "description": "Markeer een stap als bevestigd, alleen als de gebruiker dat zelf expliciet aangeeft. Vraag hier niet om.",
          "parameters": {"type": "object", "additionalProperties": false, "required": ["step", "synthesis", "user_confirmed"],
             "properties": {"step": {"type": "string", "enum": steps}, "synthesis": {"type": "string"}, "user_confirmed": {"type": "boolean"}}}},
+        {"type": "function", "name": SHOW_GUIDE,
+         "description": "Toon naast de huidige vraag inspiratie (inspireert) of concrete voorstellen (stelt_voor) en markeer de velden waar de vraag over gaat.",
+         "parameters": {"type": "object", "additionalProperties": false, "required": ["kind", "bullets", "fields"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["inspireert", "stelt_voor"]},
+                "bullets": {"type": "array", "items": {"type": "string", "maxLength": 200}, "minItems": 2, "maxItems": MAX_BULLETS},
+                "fields": {"type": "array", "items": {"type": "string", "enum": fields}, "maxItems": MAX_BULLETS}
+            }}},
         {"type": "function", "name": QUESTION_ANSWERED,
          "description": "De vraag op het scherm is voldoende beantwoord: toon de volgende vraag.",
          "parameters": {"type": "object", "additionalProperties": false, "properties": {}}}
@@ -637,6 +722,39 @@ mod tests {
         // parked field blocks completion of another step
         c.items.iter_mut().for_each(|i| i.status = "PARKED".into());
         assert!(!c.missing_fields("KIES").is_empty());
+    }
+
+    #[test]
+    fn steps_are_strictly_ordered() {
+        let mut c = Canvas::default();
+        assert_eq!(c.current_step(), Some("KIES"));
+        assert_eq!(c.active_step(), None, "nothing said yet");
+        // An answer about a later chapter is recorded but does not move the focus.
+        let a = json!({"step": "MEET", "field": "kpi", "value": "x", "status": "PARTIAL", "expected_revision": 0});
+        let m = validate("update_canvas_item", &a, &c, &ctx(true)).unwrap();
+        c.apply(&m);
+        assert_eq!(c.active_step(), Some("KIES"));
+        assert!(c.focus_hint().contains("Huidig hoofdstuk: KIES"));
+        // A later chapter cannot be completed before the current one.
+        let done = json!({"step": "MEET", "synthesis": "s", "user_confirmed": true});
+        assert!(matches!(validate("complete_step", &done, &c, &ctx(true)), Err(e) if e.contains("KIES")));
+        // KIES answered (one field parked): next is confirming KIES, then MEET.
+        for f in STEPS[0].fields {
+            upd(&mut c, f.key, "ASSUMPTION", 0, "").unwrap();
+        }
+        let m = c.manual_edit("KIES", "ai_fit", "", "PARKED", 2).unwrap();
+        c.apply(&Mutation::Item(m));
+        assert_eq!(c.current_step(), Some("MEET"));
+        assert!(c.focus_hint().contains("Huidig hoofdstuk: MEET"), "no confirmation detour");
+    }
+
+    #[test]
+    fn guide_is_parsed_and_bounded() {
+        let g = parse_guide(&json!({"kind": "stelt_voor", "bullets": ["a", " ", "b", "c", "d", "e"], "fields": ["kpi", "bestaatniet"]})).unwrap();
+        assert_eq!(g.bullets, vec!["a", "b", "c", "d"]);
+        assert_eq!(g.fields, vec![FieldRef { step: "MEET".into(), field: "kpi".into() }]);
+        assert!(parse_guide(&json!({"kind": "x", "bullets": ["a"], "fields": []})).is_err());
+        assert!(parse_guide(&json!({"kind": "inspireert", "bullets": [], "fields": []})).is_err());
     }
 
     #[test]

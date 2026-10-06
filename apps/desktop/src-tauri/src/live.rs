@@ -88,6 +88,10 @@ pub struct Snapshot {
     pub model: String,
     pub user_turns: i64,
     pub audio_in_secs: f64,
+    /// Inspiration/proposals next to the question, and the fields the question is about.
+    pub guide: Option<canvas::Guide>,
+    /// Field the presenter clicked to fill in again, until it is rewritten.
+    pub refill: Option<canvas::FieldRef>,
 }
 
 #[derive(Default)]
@@ -110,6 +114,10 @@ struct St {
     in_flight: Option<String>,
     /// Reply requested while another response was in flight (Ask wins over a silent update).
     queued: Option<Reply>,
+    /// Inspiration requested while busy; runs after the queued reply (dropped when a new question comes).
+    queued_inspire: bool,
+    guide: Option<canvas::Guide>,
+    refill: Option<canvas::FieldRef>,
     /// Kinds of requested responses not yet acknowledged by `response.created`, in order.
     requested: VecDeque<Reply>,
     reply_kind: HashMap<String, Reply>,
@@ -153,12 +161,15 @@ pub struct Live {
     st: Mutex<St>,
 }
 
-/// What a model response may do: silently update the canvas, or also show the next question.
+/// What a model response may do: silently update the canvas, show inspiration next to the
+/// question (`show_guide`), or show the next question.
 /// Questions advance when the model judges the current one answered (`question_answered`)
-/// or when the presenter presses the button, N or PageDown.
+/// or when the presenter presses the button, N or PageDown. Inspiration follows every new
+/// question and is refreshed with I.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Reply {
     Silent,
+    Inspire,
     Ask,
 }
 
@@ -638,6 +649,8 @@ impl Live {
             model: self.model.clone(),
             user_turns: st.m.user_turns,
             audio_in_secs: st.m.user_speech_ms as f64 / 1000.0,
+            guide: st.guide.clone(),
+            refill: st.refill.clone(),
         }
     }
 
@@ -749,7 +762,17 @@ impl Live {
             let mut asked: Vec<&Turn> = st.turns.values().filter(|t| t.speaker == "assistant" && t.is_final && !t.text.is_empty()).collect();
             asked.sort_by_key(|t| t.seq);
             let asked: Vec<String> = asked.iter().rev().take(6).map(|t| t.text.clone()).collect();
-            prompt::reply_rule(kind == Reply::Ask, &st.canvas.focus_hint(), &asked)
+            let focus = match &st.refill {
+                Some(r) => st.canvas.refill_hint(&r.step, &r.field),
+                None => st.canvas.focus_hint(),
+            };
+            match kind {
+                Reply::Inspire => {
+                    let prev = st.guide.as_ref().map(|g| g.bullets.clone()).unwrap_or_default();
+                    prompt::inspire_rule(&focus, asked.first().map(String::as_str), &prev)
+                }
+                _ => prompt::reply_rule(kind == Reply::Ask, &focus, &asked),
+            }
         };
         let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), rule);
         let ok = self.send(Conn::Rt, json!({"type": "response.create", "response": {"instructions": instructions}}));
@@ -767,7 +790,11 @@ impl Live {
         let busy = {
             let mut st = self.st.lock().unwrap();
             if st.in_flight.is_some() {
-                st.queued = st.queued.max(Some(kind));
+                if kind == Reply::Inspire {
+                    st.queued_inspire = true;
+                } else {
+                    st.queued = st.queued.max(Some(kind));
+                }
             }
             st.in_flight.is_some()
         };
@@ -780,6 +807,36 @@ impl Live {
     pub fn next_question(self: &Arc<Self>) {
         self.st.lock().unwrap().tool_followups = 0;
         self.request(Reply::Ask);
+    }
+
+    /// New inspiration/proposals next to the current question (I, and after every new question).
+    pub fn inspire(self: &Arc<Self>) {
+        self.st.lock().unwrap().tool_followups = 0;
+        self.request(Reply::Inspire);
+    }
+
+    /// The presenter clicked a tile to fill it in again: ask about that field next.
+    pub fn refill_field(self: &Arc<Self>, step: &str, field: &str) -> Result<(), String> {
+        let fd = canvas::field_def(step, field).ok_or("Onbekend veld")?;
+        if !self.allowed() {
+            return Err("Sessie is niet actief".into());
+        }
+        let r = canvas::FieldRef { step: step.into(), field: field.into() };
+        {
+            let mut st = self.st.lock().unwrap();
+            st.refill = Some(r.clone());
+            // Glow on the clicked tile right away; the new guide follows with the question.
+            if let Some(g) = st.guide.as_mut() {
+                g.fields = vec![r];
+            }
+        }
+        self.emit_snapshot();
+        self.system_item(&format!(
+            "De presentator wil het veld '{}' ({step}) opnieuw invullen. Vraag daar nu naar en overschrijf de huidige waarde met het nieuwe antwoord.",
+            fd.label
+        ));
+        self.next_question();
+        Ok(())
     }
 
     /// Pause cancels a reply that is still being written.
@@ -982,44 +1039,77 @@ impl Live {
             self.usage(&format!("missing:{id}"), &self.model, Some(&id), "missing", &Usage::default(), None);
         }
         let kind = self.st.lock().unwrap().reply_kind.remove(&id).unwrap_or(Reply::Silent);
-        let calls: Vec<&Value> = r["output"].as_array().map(|a| a.iter().filter(|o| o["type"] == "function_call").collect()).unwrap_or_default();
+        let output = r["output"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let calls: Vec<&Value> = output.iter().filter(|o| o["type"] == "function_call").collect();
+        // A shown question is followed by fresh inspiration instead of another question.
+        let asked = kind == Reply::Ask && status == "completed" && output.iter().any(|o| o["type"] == "message");
+        let mut follow = None;
         if !calls.is_empty() && status == "completed" {
-            self.run_tools(&calls, kind);
+            follow = self.run_tools(&calls, kind);
         }
-        let queued = self.st.lock().unwrap().queued.take();
+        if asked {
+            self.st.lock().unwrap().tool_followups = 0;
+            follow = Some(Reply::Inspire);
+        }
+        let (queued, inspire) = {
+            let mut st = self.st.lock().unwrap();
+            let q = st.queued.take();
+            // A new question brings its own inspiration.
+            if q == Some(Reply::Ask) || asked {
+                st.queued_inspire = false;
+            }
+            let i = std::mem::take(&mut st.queued_inspire);
+            (q, i)
+        };
         if let Some(q) = queued {
             self.request(q);
         }
+        if inspire {
+            self.request(Reply::Inspire);
+        }
+        if let Some(f) = follow {
+            self.request(f);
+        }
     }
 
-    /// Execute tool calls and let the model continue in the same mode (an Ask that only
-    /// updated the canvas still owes its question).
-    fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) {
+    /// Execute tool calls; returns the follow-up that lets the model continue in the same mode
+    /// (an Ask that only updated the canvas still owes its question).
+    fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) -> Option<Reply> {
         let mut answered = false;
+        let mut guided = false;
         for c in calls {
             let name = c["name"].as_str().unwrap_or("");
+            let args = c["arguments"].as_str().unwrap_or("{}");
             let out = if name == canvas::QUESTION_ANSWERED {
                 // Only a silent update can move on; an Ask is already writing the next question.
                 answered |= kind == Reply::Silent;
                 json!({"ok": true}).to_string()
+            } else if name == canvas::SHOW_GUIDE {
+                match canvas::parse_guide(&serde_json::from_str(args).unwrap_or(Value::Null)) {
+                    Ok(g) => {
+                        guided = true;
+                        self.st.lock().unwrap().guide = Some(g);
+                        self.emit_snapshot();
+                        json!({"ok": true}).to_string()
+                    }
+                    Err(e) => json!({"ok": false, "error": e}).to_string(),
+                }
             } else {
-                self.run_tool(name, c["call_id"].as_str().unwrap_or(""), c["arguments"].as_str().unwrap_or("{}"))
+                self.run_tool(name, c["call_id"].as_str().unwrap_or(""), args)
             };
             self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
                 "type": "function_call_output", "call_id": c["call_id"], "output": out}}));
         }
         if answered {
             self.next_question();
-            return;
+            return None;
         }
-        let follow = {
-            let mut st = self.st.lock().unwrap();
-            st.tool_followups += 1;
-            st.tool_followups <= MAX_TOOL_FOLLOWUPS
-        };
-        if follow {
-            self.request(kind);
+        if kind == Reply::Inspire && guided {
+            return None;
         }
+        let mut st = self.st.lock().unwrap();
+        st.tool_followups += 1;
+        (st.tool_followups <= MAX_TOOL_FOLLOWUPS).then_some(kind)
     }
 
     /// Validate and apply one tool call natively. Returns the JSON string for the model.
@@ -1050,9 +1140,19 @@ impl Live {
                     self.storage_failure(&e);
                     return json!({"ok": false, "error": "opslag mislukt"}).to_string();
                 }
-                self.st.lock().unwrap().canvas.apply(&m);
+                {
+                    let mut st = self.st.lock().unwrap();
+                    st.canvas.apply(&m);
+                    // The clicked tile has been rewritten: back to the normal order.
+                    if let Mutation::Item(it) = &m {
+                        if st.refill.as_ref().is_some_and(|r| r.step == it.step && r.field == it.field) {
+                            st.refill = None;
+                        }
+                    }
+                }
                 if !matches!(m, Mutation::Read) {
                     self.emit_canvas();
+                    self.emit_snapshot();
                 }
                 result
             }
