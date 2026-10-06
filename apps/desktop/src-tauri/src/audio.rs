@@ -75,6 +75,8 @@ pub enum AudioEvent {
     /// 24 kHz PCM16 LE, only during detected speech (plus pre-roll).
     Frame(Vec<u8>),
     SpeechEnd { duration_ms: u64 },
+    /// Still speaking, but long enough to process what was said so far (near-real-time canvas).
+    SpeechChunk { duration_ms: u64 },
     /// Too short to be a turn; buffered audio should be cleared.
     SpeechDiscard,
     DeviceFallback(String),
@@ -88,18 +90,22 @@ pub struct Vad {
     speaking: bool,
     above: u32,
     below: u32,
-    speech_frames: u32,
+    /// Frames since the turn (or the last chunk) started.
+    chunk_frames: u32,
     preroll: VecDeque<Vec<u8>>,
 }
 
 const START_FRAMES: u32 = 3; // 60 ms
-const END_FRAMES: u32 = 35; // 700 ms silence ends a turn
+const END_FRAMES: u32 = 25; // 500 ms silence ends a turn
+const CHUNK_FRAMES: u32 = 200; // after 4 s of speech, split at the next short pause…
+const CHUNK_PAUSE_FRAMES: u32 = 8; // …of 160 ms
+const MAX_CHUNK_FRAMES: u32 = 400; // or after 8 s regardless
 const MIN_SPEECH_FRAMES: u32 = 15; // 300 ms
 const PREROLL_FRAMES: usize = 15;
 
 impl Default for Vad {
     fn default() -> Self {
-        Vad { floor: 0.004, speaking: false, above: 0, below: 0, speech_frames: 0, preroll: VecDeque::new() }
+        Vad { floor: 0.004, speaking: false, above: 0, below: 0, chunk_frames: 0, preroll: VecDeque::new() }
     }
 }
 
@@ -120,20 +126,25 @@ impl Vad {
             if self.above >= START_FRAMES {
                 self.speaking = true;
                 self.below = 0;
-                self.speech_frames = self.above;
+                self.chunk_frames = self.above;
                 ev.push(AudioEvent::SpeechStart);
                 ev.extend(self.preroll.drain(..).map(AudioEvent::Frame));
             }
         } else {
-            self.speech_frames += 1;
+            self.chunk_frames += 1;
             self.below = if loud { 0 } else { self.below + 1 };
             ev.push(AudioEvent::Frame(pcm));
-            if self.below >= END_FRAMES {
+            let pause = self.below >= CHUNK_PAUSE_FRAMES && self.below < END_FRAMES;
+            if (self.chunk_frames >= CHUNK_FRAMES && pause) || self.chunk_frames >= MAX_CHUNK_FRAMES {
+                ev.push(AudioEvent::SpeechChunk { duration_ms: self.chunk_frames as u64 * 20 });
+                self.chunk_frames = 0;
+            } else if self.below >= END_FRAMES {
                 self.speaking = false;
                 self.above = 0;
-                let voiced = self.speech_frames - self.below;
+                // Only what was said since the last chunk counts: a silent tail after a chunk is discarded.
+                let voiced = self.chunk_frames.saturating_sub(self.below);
                 ev.push(if voiced >= MIN_SPEECH_FRAMES {
-                    AudioEvent::SpeechEnd { duration_ms: self.speech_frames as u64 * 20 }
+                    AudioEvent::SpeechEnd { duration_ms: self.chunk_frames as u64 * 20 }
                 } else {
                     AudioEvent::SpeechDiscard
                 });
@@ -314,5 +325,23 @@ mod tests {
         feed(&mut v, 0.2, 4);
         let ev = feed(&mut v, 0.001, 40);
         assert!(ev.iter().any(|e| matches!(e, AudioEvent::SpeechDiscard)));
+    }
+
+    #[test]
+    fn long_speech_is_chunked_at_pauses() {
+        let mut v = Vad::default();
+        feed(&mut v, 0.001, 50);
+        let ev = feed(&mut v, 0.2, 210);
+        assert!(!ev.iter().any(|e| matches!(e, AudioEvent::SpeechChunk { .. })), "no split mid-word");
+        let ev = feed(&mut v, 0.001, 10);
+        assert!(ev.iter().any(|e| matches!(e, AudioEvent::SpeechChunk { .. })), "split at a short pause");
+        assert!(!ev.iter().any(|e| matches!(e, AudioEvent::SpeechEnd { .. })));
+        // without any pause, a hard split after 8 s
+        let ev = feed(&mut v, 0.2, 410);
+        assert!(ev.iter().any(|e| matches!(e, AudioEvent::SpeechChunk { .. })));
+        let ev = feed(&mut v, 0.2, 20);
+        assert!(ev.iter().all(|e| matches!(e, AudioEvent::Frame(_))));
+        let ev = feed(&mut v, 0.001, 30);
+        assert!(ev.iter().any(|e| matches!(e, AudioEvent::SpeechEnd { .. })));
     }
 }

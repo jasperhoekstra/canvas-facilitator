@@ -2,18 +2,27 @@
 
 use crate::canvas::STEPS;
 
-pub const PROMPT_VERSION: &str = "fac-2026-10-06.5-geensamenvatting";
+pub const PROMPT_VERSION: &str = "fac-2026-10-06.6-realtime";
 pub const STYLES: [&str; 3] = ["neutraal", "coachend", "kritisch"];
 
 /// Per-response addition: may this response show a new question, or only update the canvas?
 /// `focus` describes where the story is (chapter + open fields); `asked` lists recent questions.
 pub fn reply_rule(ask: bool, focus: &str, asked: &[String]) -> String {
     if !ask {
-        return "NU: werk ALLEEN het canvas bij met tools op basis van wat net is gezegd: vul en verbeter ALLE velden waar het \
-                antwoord iets over zegt, in één keer. Schrijf geen tekst en stel geen vraag. \
-                Geeft het antwoord een bruikbare waarde voor wat de vraag vroeg, roep dan in dezelfde beurt ook question_answered aan; \
-                dan volgt direct de volgende vraag. Twijfel je, ga dan door. Is er niets nieuws, doe dan niets."
-            .into();
+        let mut r = String::from(
+            "NU: werk ALLEEN het canvas bij met tools op basis van wat net is gezegd: vul en verbeter ALLE velden waar het \
+             antwoord iets over zegt, meteen, ook als de presentator nog doorpraat (het kan een tussenstuk zijn). \
+             Schrijf geen tekst en stel geen vraag. Is er niets nieuws, doe dan niets.",
+        );
+        if !focus.is_empty() {
+            r.push_str(&format!(
+                "\nDe vraag op het scherm gaat over: {focus}. Zodra die een bruikbare waarde hebben, ga je vanzelf door; \
+                 roep question_answered alleen aan als de vraag op een andere manier beantwoord is (bijv. bewust geparkeerd of niet van toepassing)."
+            ));
+        } else {
+            r.push_str("\nGeeft het antwoord een bruikbare waarde voor wat de vraag vroeg, roep dan in dezelfde beurt question_answered aan.");
+        }
+        return r;
     }
     let mut r = format!(
         "NU: tijd voor de volgende vraag. Werk eerst het canvas bij met wat net is gezegd. \
