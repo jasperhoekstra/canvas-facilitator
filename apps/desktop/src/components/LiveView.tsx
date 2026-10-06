@@ -139,7 +139,7 @@ export function LiveView({ title, steps, snap, view, setView, turns, setTurns, o
           <button className="btn small" aria-pressed={mode === "ending"} onClick={() => setMode("ending")} title="Slotverhaal (S)">Slot</button>
         </div>
         <button className="btn small ghost" aria-pressed={showTranscript} onClick={() => setShowTranscript(!showTranscript)}>Transcript</button>
-        <button className="btn small primary" disabled={ended || busy || snap.paused} onClick={next} title="Volgende vraag (N, PageDown of zeg 'volgende')">Volgende vraag ⏭</button>
+        <button className="btn small primary" disabled={ended || busy || snap.paused} onClick={next} title="Volgende vraag (N of PageDown)">Volgende vraag ⏭</button>
         <button className="btn small ghost" onClick={() => setFullscreen(!presenting)} title="Volledig scherm (F, Esc om te sluiten)" aria-label="Volledig scherm">{presenting ? "Venster" : "⛶"}</button>
         <form
           onSubmit={(e) => {

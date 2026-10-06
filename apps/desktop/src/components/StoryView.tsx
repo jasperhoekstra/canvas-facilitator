@@ -98,7 +98,7 @@ export const StoryView = memo(function StoryView({ title, steps, view, turns, th
             {question ? question.text : "Vertel over je AI-idee: welk probleem wil je oplossen, en voor wie?"}
           </blockquote>
           {thinking && <div className="thinking" aria-label="Facilitator schrijft mee"><span /><span /><span /></div>}
-          <button className="next-hint" onClick={onNext}>Zeg <strong>„volgende”</strong> of druk <kbd>N</kbd> voor de volgende vraag</button>
+          <button className="next-hint" onClick={onNext}>Druk <kbd>N</kbd> voor de volgende vraag</button>
           {said && (
             <div className={`subtitle ${said.final ? "" : "provisional"}`}>
               <span className="who">Jij</span> {said.text}

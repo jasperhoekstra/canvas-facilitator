@@ -67,7 +67,10 @@ async fn respond(ws: &mut Ws, run: &mut Run, line_idx: usize) {
             let name = c["name"].as_str().unwrap_or("");
             let args: Value = serde_json::from_str(c["arguments"].as_str().unwrap_or("{}")).unwrap_or_default();
             let ctx = canvas::ToolCtx { last_user_turn: Some(format!("u{line_idx}")), now: line_idx as i64 };
-            let out = match canvas::validate(name, &args, &run.canvas, &ctx) {
+            // Signal tool, no canvas mutation: every eval turn already asks the next question.
+            let out = if name == canvas::QUESTION_ANSWERED {
+                json!({"ok": true})
+            } else { match canvas::validate(name, &args, &run.canvas, &ctx) {
                 Ok(m) => {
                     let res = canvas::tool_result(&m, &run.canvas);
                     run.canvas.apply(&m);
@@ -77,7 +80,7 @@ async fn respond(ws: &mut Ws, run: &mut Run, line_idx: usize) {
                     run.rejected.push(format!("{name}: {e}"));
                     json!({"ok": false, "error": e})
                 }
-            };
+            } };
             send(ws, json!({"type": "conversation.item.create", "item": {"type": "function_call_output", "call_id": c["call_id"], "output": out.to_string()}})).await;
         }
     }
