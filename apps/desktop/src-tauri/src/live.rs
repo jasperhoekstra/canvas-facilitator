@@ -39,7 +39,6 @@ pub mod models {
 /// Fixed OpenAI host; credentials are never sent anywhere else.
 pub const HOST: &str = "api.openai.com";
 pub const MAX_OUTPUT_TOKENS: i64 = 800;
-const MAX_TOOL_FOLLOWUPS: u32 = 4;
 const MAX_CONTEXT_ITEMS: usize = 60;
 const TRIM_ITEMS: usize = 20;
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -90,8 +89,9 @@ pub struct Snapshot {
     pub audio_in_secs: f64,
     /// Inspiration/proposals next to the question, and the fields the question is about.
     pub guide: Option<canvas::Guide>,
-    /// Field the presenter clicked to fill in again, until it is rewritten.
-    pub refill: Option<canvas::FieldRef>,
+    /// The question on screen is fully answered: "vraag" (next question), a step key (that
+    /// chapter is next) or "einde". The presenter moves on with N.
+    pub ready: Option<String>,
 }
 
 #[derive(Default)]
@@ -107,7 +107,6 @@ struct St {
     turns: HashMap<String, Turn>,
     pending_tr: VecDeque<String>,
     tr_items: HashMap<String, String>,
-    asst_items: HashMap<String, String>,
     speaking_turn: Option<String>,
     turn_timing: HashMap<String, (Instant, Option<Instant>, bool)>,
     last_user_turn: Option<String>,
@@ -116,17 +115,22 @@ struct St {
     queued: Option<Reply>,
     /// Inspiration requested while busy; runs after the queued reply (dropped when a new question comes).
     queued_inspire: bool,
+    /// The question on screen, its inspiration and the tiles it is about.
+    question: Option<String>,
     guide: Option<canvas::Guide>,
-    refill: Option<canvas::FieldRef>,
-    /// Fields the question on screen is about, with their revision when it was asked.
+    /// Tiles the question is about, with their revision when it was asked.
     targets: Vec<(canvas::FieldRef, i64)>,
-    /// The question is answered, but the presenter is still talking: move on once they stop.
-    advance_pending: bool,
+    /// Follow-up questions on the current topic so far.
+    deepens: u8,
+    /// The presenter said something since the last decision (answer still to judge).
+    fresh: bool,
+    /// The presenter said "sla over" / "weet ik niet".
+    skip_said: bool,
+    ready: Option<String>,
     /// Kinds of requested responses not yet acknowledged by `response.created`, in order.
     requested: VecDeque<Reply>,
     reply_kind: HashMap<String, Reply>,
     awaiting_reply_since: Option<Instant>,
-    tool_followups: u32,
     items: VecDeque<String>,
     budget_warned: u8,
     status: String,
@@ -165,15 +169,14 @@ pub struct Live {
     st: Mutex<St>,
 }
 
-/// What a model response may do: silently update the canvas, show inspiration next to the
-/// question (`show_guide`), or show the next question.
-/// Questions advance when the model judges the current one answered (`question_answered`)
-/// or when the presenter presses the button, N or PageDown. Inspiration follows every new
-/// question and is refreshed with I.
+/// What a model response does. Silent: fill tiles while the presenter talks. Ask: a new
+/// question (with its inspiration). Deepen: a follow-up or challenge after a half answer.
+/// Inspire: new bullets for the question on screen (I).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Reply {
     Silent,
     Inspire,
+    Deepen,
     Ask,
 }
 
@@ -654,7 +657,7 @@ impl Live {
             user_turns: st.m.user_turns,
             audio_in_secs: st.m.user_speech_ms as f64 / 1000.0,
             guide: st.guide.clone(),
-            refill: st.refill.clone(),
+            ready: st.ready.clone(),
         }
     }
 
@@ -766,25 +769,35 @@ impl Live {
             let mut asked: Vec<&Turn> = st.turns.values().filter(|t| t.speaker == "assistant" && t.is_final && !t.text.is_empty()).collect();
             asked.sort_by_key(|t| t.seq);
             let asked: Vec<String> = asked.iter().rev().take(6).map(|t| t.text.clone()).collect();
-            let focus = match &st.refill {
-                Some(r) => st.canvas.refill_hint(&r.step, &r.field),
-                None => st.canvas.focus_hint(),
-            };
+            let q = st.question.as_deref();
             match kind {
+                Reply::Silent => prompt::fill_rule(q),
+                Reply::Ask => prompt::ask_rule(&st.canvas.focus_hint(), &asked),
+                Reply::Deepen => {
+                    let (mut filled, mut open) = (vec![], vec![]);
+                    for (f, _) in &st.targets {
+                        let Some(fd) = canvas::field_def(&f.step, &f.field) else { continue };
+                        match st.canvas.item(&f.step, &f.field).filter(|_| st.canvas.is_filled(&f.step, &f.field)) {
+                            Some(i) => filled.push(format!("{} ({}) = \"{}\"", fd.label, f.field, i.value)),
+                            None => open.push(format!("{} ({})", fd.label, f.field)),
+                        }
+                    }
+                    prompt::deepen_rule(q.unwrap_or(""), &filled, &open)
+                }
                 Reply::Inspire => {
                     let prev = st.guide.as_ref().map(|g| g.bullets.clone()).unwrap_or_default();
-                    prompt::inspire_rule(&focus, asked.first().map(String::as_str), &prev)
+                    prompt::inspire_rule(&st.canvas.focus_hint(), q, &prev)
                 }
-                Reply::Silent => {
-                    let labels: Vec<&str> =
-                        st.targets.iter().filter_map(|(f, _)| canvas::field_def(&f.step, &f.field)).map(|f| f.label).collect();
-                    prompt::reply_rule(false, &labels.join(", "), &asked)
-                }
-                Reply::Ask => prompt::reply_rule(true, &focus, &asked),
             }
         };
         let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), rule);
-        let ok = self.send(Conn::Rt, json!({"type": "response.create", "response": {"instructions": instructions}}));
+        // Questions and inspiration are one forced tool call each: always complete, never loose text.
+        let tool_choice = match kind {
+            Reply::Silent => json!("auto"),
+            Reply::Ask | Reply::Deepen => json!({"type": "function", "name": canvas::ASK}),
+            Reply::Inspire => json!({"type": "function", "name": canvas::INSPIRE}),
+        };
+        let ok = self.send(Conn::Rt, json!({"type": "response.create", "response": {"instructions": instructions, "tool_choice": tool_choice}}));
         if ok {
             let mut st = self.st.lock().unwrap();
             // Placeholder until response.created arrives: prevents concurrent generations.
@@ -812,63 +825,71 @@ impl Live {
         }
     }
 
-    /// Move on to the next question (button, N/PageDown, or the model's `question_answered`).
+    /// Next question (N, PageDown, button, or "sla over"): tiles of this question that are still
+    /// empty are skipped, so the story moves on.
     pub fn next_question(self: &Arc<Self>) {
         {
             let mut st = self.st.lock().unwrap();
-            st.tool_followups = 0;
-            st.advance_pending = false;
+            let open: Vec<String> =
+                st.targets.iter().filter(|(f, _)| !st.canvas.is_filled(&f.step, &f.field)).map(|(f, _)| f.field.clone()).collect();
+            st.canvas.skipped.extend(open);
+            st.ready = None;
+            st.skip_said = false;
+            st.fresh = false;
         }
+        self.emit_canvas();
         self.request(Reply::Ask);
     }
 
-    /// Move on once the question is answered and the presenter has finished talking
-    /// (no speech in progress, nothing left to process).
-    fn advance_if_ready(self: &Arc<Self>) {
-        let ready = {
-            let mut st = self.st.lock().unwrap();
-            let idle = st.speaking_turn.is_none() && st.in_flight.is_none() && st.queued.is_none();
-            let go = st.advance_pending && idle;
-            if go {
-                st.advance_pending = false;
-            }
-            go
-        };
-        if ready {
-            self.next_question();
-        }
+    /// Follow-up or challenge on the current question (D).
+    pub fn deepen(self: &Arc<Self>) {
+        self.st.lock().unwrap().ready = None;
+        self.request(Reply::Deepen);
     }
 
-    /// New inspiration/proposals next to the current question (I, and after every new question).
+    /// New inspiration/proposals next to the current question (I).
     pub fn inspire(self: &Arc<Self>) {
-        self.st.lock().unwrap().tool_followups = 0;
         self.request(Reply::Inspire);
     }
 
-    /// The presenter clicked a tile to fill it in again: ask about that field next.
-    pub fn refill_field(self: &Arc<Self>, step: &str, field: &str) -> Result<(), String> {
-        let fd = canvas::field_def(step, field).ok_or("Onbekend veld")?;
-        if !self.allowed() {
-            return Err("Sessie is niet actief".into());
+    /// Judge the answer once the presenter has finished talking and everything is processed:
+    /// all tiles of the question filled → show that we can move on (the presenter presses N);
+    /// half → a follow-up or challenge (twice at most); nothing yet → keep listening.
+    fn decide(self: &Arc<Self>) {
+        let mut st = self.st.lock().unwrap();
+        let idle = st.speaking_turn.is_none() && st.in_flight.is_none() && st.queued.is_none();
+        if !idle {
+            return;
         }
-        let r = canvas::FieldRef { step: step.into(), field: field.into() };
-        {
-            let mut st = self.st.lock().unwrap();
-            st.refill = Some(r.clone());
-            let rev = st.canvas.item(step, field).map_or(0, |i| i.revision);
-            st.targets = vec![(r.clone(), rev)];
-            // Glow on the clicked tile right away; the new guide follows with the question.
-            if let Some(g) = st.guide.as_mut() {
-                g.fields = vec![r];
-            }
+        if st.skip_said {
+            drop(st);
+            self.next_question();
+            return;
         }
-        self.emit_snapshot();
-        self.system_item(&format!(
-            "De presentator wil het veld '{}' ({step}) opnieuw invullen. Vraag daar nu naar en overschrijf de huidige waarde met het nieuwe antwoord.",
-            fd.label
-        ));
-        self.next_question();
-        Ok(())
+        if !std::mem::take(&mut st.fresh) || st.targets.is_empty() {
+            return;
+        }
+        let filled = st.targets.iter().filter(|(f, rev)| st.canvas.is_filled(&f.step, &f.field) && st.canvas.item(&f.step, &f.field).is_some_and(|i| i.revision > *rev)).count();
+        // Every tile of the question filled, and the answer added something.
+        let complete = filled > 0 && st.targets.iter().all(|(f, _)| st.canvas.is_filled(&f.step, &f.field));
+        if complete || (filled > 0 && st.deepens >= 2) {
+            let step = st.targets[0].0.step.clone();
+            // Still empty after two follow-ups: leave it open and move on.
+            let open: Vec<String> =
+                st.targets.iter().filter(|(f, _)| !st.canvas.is_filled(&f.step, &f.field)).map(|(f, _)| f.field.clone()).collect();
+            st.canvas.skipped.extend(open);
+            st.ready = Some(match st.canvas.current_step() {
+                Some(cur) if cur == step => "vraag".into(),
+                Some(next) => next.into(),
+                None => "einde".into(),
+            });
+            drop(st);
+            self.emit_snapshot();
+        } else if filled > 0 {
+            st.deepens += 1;
+            drop(st);
+            self.request(Reply::Deepen);
+        }
     }
 
     /// Pause cancels a reply that is still being written.
@@ -889,7 +910,6 @@ impl Live {
         st.speaking_turn = Some(t.id.clone());
         st.turn_timing.insert(t.id.clone(), (Instant::now(), None, false));
         st.turns.insert(t.id.clone(), t.clone());
-        st.tool_followups = 0;
         drop(st);
         emit(&self.app, "turn", t);
     }
@@ -917,7 +937,7 @@ impl Live {
             t.ended_at = Some(now_ms());
             self.save_turn(&t, true);
         }
-        // Keep the canvas current; advancing waits until the presenter stops talking.
+        // Keep the canvas current; the answer is judged once the presenter stops talking.
         self.request(Reply::Silent);
         true
     }
@@ -959,7 +979,7 @@ impl Live {
                 if let Some(tid) = tid {
                     emit(&self.app, "turn-removed", tid);
                 }
-                self.advance_if_ready();
+                self.decide();
             }
             AudioEvent::DeviceFallback(m) => notice(&self.app, "warn", &m),
             AudioEvent::DeviceError(m) => {
@@ -992,43 +1012,11 @@ impl Live {
                 let est = Usage { text_in: 12_000, audio_in: 3_000, text_out: MAX_OUTPUT_TOKENS, ..Default::default() };
                 self.usage(&format!("est:{id}"), &self.model, Some(&id), "estimated", &est, None);
             }
-            // Text of silent canvas updates is never shown: the current question stays on screen.
-            "response.output_text.delta" | "response.output_text.done" if !self.shows_text(&v) => {}
-            "response.output_text.delta" => {
-                let item = v["item_id"].as_str().unwrap_or("").to_string();
-                let tid = self.asst_turn(&item);
-                let t = {
-                    let mut st = self.st.lock().unwrap();
-                    if let Some(since) = st.awaiting_reply_since.take() {
-                        st.m.lat_first_reply_ms.push(since.elapsed().as_millis() as i64);
-                    }
-                    let t = st.turns.get_mut(&tid).unwrap();
-                    t.text.push_str(v["delta"].as_str().unwrap_or(""));
-                    t.clone()
-                };
-                self.save_turn(&t, false);
-            }
-            "response.output_text.done" => {
-                let item = v["item_id"].as_str().unwrap_or("").to_string();
-                let t = {
-                    let mut st = self.st.lock().unwrap();
-                    let Some(tid) = st.asst_items.get(&item).cloned() else { return };
-                    let Some(t) = st.turns.get_mut(&tid) else { return };
-                    if let Some(tr) = v["text"].as_str() {
-                        t.text = tr.to_string();
-                    }
-                    t.is_final = true;
-                    t.ended_at = Some(now_ms());
-                    st.m.assistant_turns += 1;
-                    st.turns.get(&tid).unwrap().clone()
-                };
-                self.save_turn(&t, true);
-            }
             // Apply each canvas write as soon as its arguments are complete (tiles fill while the
             // response is still running); response.done replays the cached result to the model.
             "response.output_item.done" if v["item"]["type"] == "function_call" => {
                 let name = v["item"]["name"].as_str().unwrap_or("");
-                if name != canvas::QUESTION_ANSWERED && name != canvas::SHOW_GUIDE {
+                if name != canvas::ASK && name != canvas::INSPIRE {
                     let args = v["item"]["arguments"].as_str().unwrap_or("{}");
                     self.run_tool(name, v["item"]["call_id"].as_str().unwrap_or(""), args);
                 }
@@ -1059,24 +1047,6 @@ impl Live {
         }
     }
 
-    fn shows_text(&self, v: &Value) -> bool {
-        let id = v["response_id"].as_str().unwrap_or("");
-        self.st.lock().unwrap().reply_kind.get(id) == Some(&Reply::Ask)
-    }
-
-    /// Turn id for an assistant text item, created on first sight.
-    fn asst_turn(&self, item: &str) -> String {
-        if let Some(t) = self.st.lock().unwrap().asst_items.get(item) {
-            return t.clone();
-        }
-        let t = self.new_turn("assistant", "", false);
-        let id = t.id.clone();
-        let mut st = self.st.lock().unwrap();
-        st.asst_items.insert(item.into(), id.clone());
-        st.turns.insert(id.clone(), t);
-        id
-    }
-
     fn on_response_done(self: &Arc<Self>, r: &Value) {
         let id = r["id"].as_str().unwrap_or("").to_string();
         let status = r["status"].as_str().unwrap_or("");
@@ -1095,31 +1065,21 @@ impl Live {
             self.usage(&format!("missing:{id}"), &self.model, Some(&id), "missing", &Usage::default(), None);
         }
         let kind = self.st.lock().unwrap().reply_kind.remove(&id).unwrap_or(Reply::Silent);
-        let output = r["output"].as_array().map(Vec::as_slice).unwrap_or_default();
-        let calls: Vec<&Value> = output.iter().filter(|o| o["type"] == "function_call").collect();
-        // A shown question is followed by fresh inspiration instead of another question.
-        let asked = kind == Reply::Ask && status == "completed" && output.iter().any(|o| o["type"] == "message");
-        let mut follow = None;
-        if !calls.is_empty() && status == "completed" {
-            follow = self.run_tools(&calls, kind);
-        }
-        if asked {
-            let mut st = self.st.lock().unwrap();
-            st.tool_followups = 0;
-            // A new question: its fields arrive with the guide (or the clicked tile).
-            let keep = st.refill.clone();
-            st.targets.retain(|(f, _)| Some(f) == keep.as_ref());
-            follow = Some(Reply::Inspire);
+        let calls: Vec<&Value> = r["output"].as_array().map(|a| a.iter().filter(|o| o["type"] == "function_call").collect()).unwrap_or_default();
+        if status == "completed" {
+            self.run_tools(&calls, kind);
+            if kind == Reply::Silent {
+                self.st.lock().unwrap().fresh = true;
+            }
         }
         let (queued, inspire) = {
             let mut st = self.st.lock().unwrap();
             let q = st.queued.take();
             // A new question brings its own inspiration.
-            if q == Some(Reply::Ask) || asked {
+            if matches!(q, Some(Reply::Ask | Reply::Deepen)) {
                 st.queued_inspire = false;
             }
-            let i = std::mem::take(&mut st.queued_inspire);
-            (q, i)
+            (q, std::mem::take(&mut st.queued_inspire))
         };
         if let Some(q) = queued {
             self.request(q);
@@ -1127,69 +1087,65 @@ impl Live {
         if inspire {
             self.request(Reply::Inspire);
         }
-        if let Some(f) = follow {
-            self.request(f);
-        }
-        self.advance_if_ready();
+        self.decide();
     }
 
-    /// Execute tool calls; returns the follow-up that lets the model continue in the same mode
-    /// (an Ask that only updated the canvas still owes its question).
-    fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) -> Option<Reply> {
-        let mut answered = false;
-        let mut guided = false;
+    /// Execute tool calls and return their outputs to the model. No follow-up responses: each
+    /// response does one thing.
+    fn run_tools(self: &Arc<Self>, calls: &[&Value], kind: Reply) {
         for c in calls {
             let name = c["name"].as_str().unwrap_or("");
             let args = c["arguments"].as_str().unwrap_or("{}");
-            let out = if name == canvas::QUESTION_ANSWERED {
-                // Only a silent update can move on; an Ask is already writing the next question.
-                answered |= kind == Reply::Silent;
-                json!({"ok": true}).to_string()
-            } else if name == canvas::SHOW_GUIDE {
-                match canvas::parse_guide(&serde_json::from_str(args).unwrap_or(Value::Null)) {
-                    Ok(g) => {
-                        guided = true;
-                        let mut st = self.st.lock().unwrap();
-                        // Revision at question time; a refreshed guide (I) keeps earlier marks.
-                        for f in &g.fields {
-                            if !st.targets.iter().any(|(t, _)| t == f) {
-                                let rev = st.canvas.item(&f.step, &f.field).map_or(0, |i| i.revision);
-                                st.targets.push((f.clone(), rev));
-                            }
-                        }
-                        st.guide = Some(g);
-                        drop(st);
-                        self.emit_snapshot();
-                        json!({"ok": true}).to_string()
+            let a: Value = serde_json::from_str(args).unwrap_or(Value::Null);
+            let out = match name {
+                canvas::ASK => match canvas::parse_question(&a) {
+                    Ok((q, g)) => {
+                        self.show_question(q, g, kind);
+                        json!({"ok": true})
                     }
-                    Err(e) => json!({"ok": false, "error": e}).to_string(),
-                }
-            } else {
-                self.run_tool(name, c["call_id"].as_str().unwrap_or(""), args)
+                    Err(e) => json!({"ok": false, "error": e}),
+                },
+                canvas::INSPIRE => match canvas::parse_inspiration(&a) {
+                    Ok((k, bullets)) => {
+                        if let Some(g) = self.st.lock().unwrap().guide.as_mut() {
+                            g.kind = k;
+                            g.bullets = bullets;
+                        }
+                        self.emit_snapshot();
+                        json!({"ok": true})
+                    }
+                    Err(e) => json!({"ok": false, "error": e}),
+                },
+                _ => serde_json::from_str(&self.run_tool(name, c["call_id"].as_str().unwrap_or(""), args)).unwrap_or(Value::Null),
             };
             self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
-                "type": "function_call_output", "call_id": c["call_id"], "output": out}}));
+                "type": "function_call_output", "call_id": c["call_id"], "output": out.to_string()}}));
         }
-        // Answered: the model says so, or every field the question is about was written since.
-        if kind == Reply::Silent {
+    }
+
+    /// Put a question on screen: an assistant turn (transcript, history, export) plus its guide.
+    fn show_question(self: &Arc<Self>, q: String, g: canvas::Guide, kind: Reply) {
+        let mut t = self.new_turn("assistant", &q, true);
+        t.ended_at = Some(now_ms());
+        {
             let mut st = self.st.lock().unwrap();
-            let filled = !st.targets.is_empty()
-                && st.targets.iter().all(|(f, rev)| {
-                    st.canvas.item(&f.step, &f.field).is_some_and(|i| i.revision > *rev && !i.value.trim().is_empty() && i.status != "UNKNOWN")
-                });
-            if answered || filled {
-                st.advance_pending = true;
-                drop(st);
-                // Waits for the presenter to finish talking (see advance_if_ready).
-                return None;
+            if let Some(since) = st.awaiting_reply_since.take() {
+                st.m.lat_first_reply_ms.push(since.elapsed().as_millis() as i64);
             }
+            st.m.assistant_turns += 1;
+            st.targets = g.fields.iter().map(|f| (f.clone(), st.canvas.item(&f.step, &f.field).map_or(0, |i| i.revision))).collect();
+            if kind == Reply::Ask {
+                st.deepens = 0;
+            }
+            st.question = Some(q);
+            st.guide = Some(g);
+            st.ready = None;
+            st.fresh = false;
+            st.turns.insert(t.id.clone(), t.clone());
         }
-        if kind == Reply::Inspire && guided {
-            return None;
-        }
-        let mut st = self.st.lock().unwrap();
-        st.tool_followups += 1;
-        (st.tool_followups <= MAX_TOOL_FOLLOWUPS).then_some(kind)
+        self.save_turn(&t, true);
+        emit(&self.app, "turn", t);
+        self.emit_snapshot();
     }
 
     /// Validate and apply one tool call natively. Returns the JSON string for the model.
@@ -1220,19 +1176,9 @@ impl Live {
                     self.storage_failure(&e);
                     return json!({"ok": false, "error": "opslag mislukt"}).to_string();
                 }
-                {
-                    let mut st = self.st.lock().unwrap();
-                    st.canvas.apply(&m);
-                    // The clicked tile has been rewritten: back to the normal order.
-                    if let Mutation::Item(it) = &m {
-                        if st.refill.as_ref().is_some_and(|r| r.step == it.step && r.field == it.field) {
-                            st.refill = None;
-                        }
-                    }
-                }
+                self.st.lock().unwrap().canvas.apply(&m);
                 if !matches!(m, Mutation::Read) {
                     self.emit_canvas();
-                    self.emit_snapshot();
                 }
                 result
             }
@@ -1318,6 +1264,11 @@ impl Live {
                     }
                 }
                 self.save_turn(&t, true);
+                // "Sla over" / "weet ik niet": move on once the presenter has stopped talking.
+                if prompt::is_skip(&t.text) {
+                    self.st.lock().unwrap().skip_said = true;
+                    self.decide();
+                }
                 let item = v["item_id"].as_str().unwrap_or("");
                 if let Some(u) = ledger::parse_transcription_usage(&v["usage"]) {
                     self.usage(&format!("tr:{item}"), models::TRANSCRIBE, None, "measured", &u, Some(&format!("trest:{item}")));
@@ -1411,8 +1362,8 @@ impl Live {
             st.last_user_turn = Some(t.id.clone());
             st.m.user_turns += 1;
             st.m.text_turns += 1;
-            st.tool_followups = 0;
             st.awaiting_reply_since = Some(Instant::now());
+            st.skip_said |= prompt::is_skip(text);
         }
         self.save_turn(&t, true);
         self.request(Reply::Silent);

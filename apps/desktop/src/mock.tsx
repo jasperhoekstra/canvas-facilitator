@@ -91,7 +91,7 @@ const session = { id: "s1", title: "AI-assistent voor offerte-aanvragen", create
 const snap = { sessionId: "s1", status: "ACTIVE", costUsd: "0.4123", costIncomplete: true, budgetUsd: "2.00",
   voiceState: q.has("late") ? "denkt" : "luistert", connection: "verbonden", muted: false, paused: false, model: "gpt-realtime-2.1", userTurns: 7, audioInSecs: 95,
   guide: { kind: "stelt_voor" as const, bullets: ["Doorlooptijd offerte als KPI: van aanvraag tot verzending", "Nulmeting: steekproef van 50 offertes uit Q3", "Target: 30% sneller binnen zes maanden"], fields: [{ step: "BEGRENS", field: "risico" }, { step: "BEGRENS", field: "guardrail" }] },
-  refill: null };
+  ready: q.has("ready") ? "REALISEER" : null };
 
 mockIPC((cmd) => {
   switch (cmd) {

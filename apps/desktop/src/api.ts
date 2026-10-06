@@ -74,7 +74,9 @@ export interface Guide { kind: "inspireert" | "stelt_voor"; bullets: string[]; f
 export interface Snapshot {
   sessionId: string; status: SessionStatus; costUsd: string; costIncomplete: boolean;
   budgetUsd: string; voiceState: string; connection: string; muted: boolean; paused: boolean; model: string;
-  userTurns: number; audioInSecs: number; guide: Guide | null; refill: FieldRef | null;
+  userTurns: number; audioInSecs: number; guide: Guide | null;
+  /** Question fully answered: "vraag", the next step key, or "einde". Moving on is the presenter's call (N). */
+  ready: string | null;
 }
 
 export interface AppStatus {
@@ -108,7 +110,7 @@ export const api = {
   sendText: (id: string, text: string) => invoke<void>("send_text", { id, text }),
   nextQuestion: (id: string) => invoke<void>("next_question", { id }),
   inspire: (id: string) => invoke<void>("inspire", { id }),
-  refillField: (id: string, step: string, field: string) => invoke<void>("refill_field", { id, step, field }),
+  deepen: (id: string) => invoke<void>("deepen", { id }),
   switchInput: (id: string, device: string | null) => invoke<void>("switch_input", { id, device }),
   liveSnapshot: () => invoke<Snapshot | null>("live_snapshot"),
   listSessions: (query: string, status: string, from: number | null, to: number | null) =>
