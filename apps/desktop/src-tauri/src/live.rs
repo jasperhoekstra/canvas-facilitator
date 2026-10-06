@@ -118,6 +118,10 @@ struct St {
     queued_inspire: bool,
     guide: Option<canvas::Guide>,
     refill: Option<canvas::FieldRef>,
+    /// Fields the question on screen is about, with their revision when it was asked.
+    targets: Vec<(canvas::FieldRef, i64)>,
+    /// The question is answered, but the presenter is still talking: move on once they stop.
+    advance_pending: bool,
     /// Kinds of requested responses not yet acknowledged by `response.created`, in order.
     requested: VecDeque<Reply>,
     reply_kind: HashMap<String, Reply>,
@@ -771,7 +775,12 @@ impl Live {
                     let prev = st.guide.as_ref().map(|g| g.bullets.clone()).unwrap_or_default();
                     prompt::inspire_rule(&focus, asked.first().map(String::as_str), &prev)
                 }
-                _ => prompt::reply_rule(kind == Reply::Ask, &focus, &asked),
+                Reply::Silent => {
+                    let labels: Vec<&str> =
+                        st.targets.iter().filter_map(|(f, _)| canvas::field_def(&f.step, &f.field)).map(|f| f.label).collect();
+                    prompt::reply_rule(false, &labels.join(", "), &asked)
+                }
+                Reply::Ask => prompt::reply_rule(true, &focus, &asked),
             }
         };
         let instructions = format!("{}\n\n{}", prompt::instructions(&self.style, &self.title), rule);
@@ -805,8 +814,29 @@ impl Live {
 
     /// Move on to the next question (button, N/PageDown, or the model's `question_answered`).
     pub fn next_question(self: &Arc<Self>) {
-        self.st.lock().unwrap().tool_followups = 0;
+        {
+            let mut st = self.st.lock().unwrap();
+            st.tool_followups = 0;
+            st.advance_pending = false;
+        }
         self.request(Reply::Ask);
+    }
+
+    /// Move on once the question is answered and the presenter has finished talking
+    /// (no speech in progress, nothing left to process).
+    fn advance_if_ready(self: &Arc<Self>) {
+        let ready = {
+            let mut st = self.st.lock().unwrap();
+            let idle = st.speaking_turn.is_none() && st.in_flight.is_none() && st.queued.is_none();
+            let go = st.advance_pending && idle;
+            if go {
+                st.advance_pending = false;
+            }
+            go
+        };
+        if ready {
+            self.next_question();
+        }
     }
 
     /// New inspiration/proposals next to the current question (I, and after every new question).
@@ -825,6 +855,8 @@ impl Live {
         {
             let mut st = self.st.lock().unwrap();
             st.refill = Some(r.clone());
+            let rev = st.canvas.item(step, field).map_or(0, |i| i.revision);
+            st.targets = vec![(r.clone(), rev)];
             // Glow on the clicked tile right away; the new guide follows with the question.
             if let Some(g) = st.guide.as_mut() {
                 g.fields = vec![r];
@@ -848,22 +880,52 @@ impl Live {
 
     // ---------- audio events (audio thread) ----------
 
+    fn begin_turn(self: &Arc<Self>) {
+        if !self.allowed() {
+            return;
+        }
+        let t = self.new_turn("user", "", false);
+        let mut st = self.st.lock().unwrap();
+        st.speaking_turn = Some(t.id.clone());
+        st.turn_timing.insert(t.id.clone(), (Instant::now(), None, false));
+        st.turns.insert(t.id.clone(), t.clone());
+        st.tool_followups = 0;
+        drop(st);
+        emit(&self.app, "turn", t);
+    }
+
+    /// Commit the speech so far as a turn and update the canvas from it. False if nothing was committed.
+    fn end_turn(self: &Arc<Self>, duration_ms: u64) -> bool {
+        let Some(tid) = self.st.lock().unwrap().speaking_turn.take() else { return false };
+        if !self.send(Conn::Rt, json!({"type": "input_audio_buffer.commit"})) {
+            return false;
+        }
+        self.send(Conn::Tr, json!({"type": "input_audio_buffer.commit"}));
+        {
+            let mut st = self.st.lock().unwrap();
+            st.pending_tr.push_back(tid.clone());
+            st.last_user_turn = Some(tid.clone());
+            st.m.user_turns += 1;
+            st.m.user_speech_ms += duration_ms as i64;
+            if let Some(tt) = st.turn_timing.get_mut(&tid) {
+                tt.1 = Some(Instant::now());
+            }
+            st.awaiting_reply_since = Some(Instant::now());
+        }
+        let t = self.st.lock().unwrap().turns.get(&tid).cloned();
+        if let Some(mut t) = t {
+            t.ended_at = Some(now_ms());
+            self.save_turn(&t, true);
+        }
+        // Keep the canvas current; advancing waits until the presenter stops talking.
+        self.request(Reply::Silent);
+        true
+    }
+
     fn on_audio(self: &Arc<Self>, e: AudioEvent) {
         match e {
             AudioEvent::Level(l) => emit(&self.app, "level", l),
-            AudioEvent::SpeechStart => {
-                if !self.allowed() {
-                    return;
-                }
-                let t = self.new_turn("user", "", false);
-                let mut st = self.st.lock().unwrap();
-                st.speaking_turn = Some(t.id.clone());
-                st.turn_timing.insert(t.id.clone(), (Instant::now(), None, false));
-                st.turns.insert(t.id.clone(), t.clone());
-                st.tool_followups = 0;
-                drop(st);
-                emit(&self.app, "turn", t);
-            }
+            AudioEvent::SpeechStart => self.begin_turn(),
             AudioEvent::Frame(pcm) => {
                 if self.paused.load(SeqCst) || self.muted.load(SeqCst) {
                     return;
@@ -882,29 +944,13 @@ impl Live {
                 }
             }
             AudioEvent::SpeechEnd { duration_ms } => {
-                let Some(tid) = self.st.lock().unwrap().speaking_turn.take() else { return };
-                if !self.send(Conn::Rt, json!({"type": "input_audio_buffer.commit"})) {
-                    return;
+                self.end_turn(duration_ms);
+            }
+            // Long story: process what was said so far and keep listening in a new turn.
+            AudioEvent::SpeechChunk { duration_ms } => {
+                if self.end_turn(duration_ms) {
+                    self.begin_turn();
                 }
-                self.send(Conn::Tr, json!({"type": "input_audio_buffer.commit"}));
-                {
-                    let mut st = self.st.lock().unwrap();
-                    st.pending_tr.push_back(tid.clone());
-                    st.last_user_turn = Some(tid.clone());
-                    st.m.user_turns += 1;
-                    st.m.user_speech_ms += duration_ms as i64;
-                    if let Some(tt) = st.turn_timing.get_mut(&tid) {
-                        tt.1 = Some(Instant::now());
-                    }
-                    st.awaiting_reply_since = Some(Instant::now());
-                }
-                let t = self.st.lock().unwrap().turns.get(&tid).cloned();
-                if let Some(mut t) = t {
-                    t.ended_at = Some(now_ms());
-                    self.save_turn(&t, true);
-                }
-                // Keep the canvas current; the model advances via question_answered once answered.
-                self.request(Reply::Silent);
             }
             AudioEvent::SpeechDiscard => {
                 let tid = self.st.lock().unwrap().speaking_turn.take();
@@ -913,6 +959,7 @@ impl Live {
                 if let Some(tid) = tid {
                     emit(&self.app, "turn-removed", tid);
                 }
+                self.advance_if_ready();
             }
             AudioEvent::DeviceFallback(m) => notice(&self.app, "warn", &m),
             AudioEvent::DeviceError(m) => {
@@ -976,6 +1023,15 @@ impl Live {
                     st.turns.get(&tid).unwrap().clone()
                 };
                 self.save_turn(&t, true);
+            }
+            // Apply each canvas write as soon as its arguments are complete (tiles fill while the
+            // response is still running); response.done replays the cached result to the model.
+            "response.output_item.done" if v["item"]["type"] == "function_call" => {
+                let name = v["item"]["name"].as_str().unwrap_or("");
+                if name != canvas::QUESTION_ANSWERED && name != canvas::SHOW_GUIDE {
+                    let args = v["item"]["arguments"].as_str().unwrap_or("{}");
+                    self.run_tool(name, v["item"]["call_id"].as_str().unwrap_or(""), args);
+                }
             }
             "response.done" => self.on_response_done(&v["response"]),
             "error" => {
@@ -1048,7 +1104,11 @@ impl Live {
             follow = self.run_tools(&calls, kind);
         }
         if asked {
-            self.st.lock().unwrap().tool_followups = 0;
+            let mut st = self.st.lock().unwrap();
+            st.tool_followups = 0;
+            // A new question: its fields arrive with the guide (or the clicked tile).
+            let keep = st.refill.clone();
+            st.targets.retain(|(f, _)| Some(f) == keep.as_ref());
             follow = Some(Reply::Inspire);
         }
         let (queued, inspire) = {
@@ -1070,6 +1130,7 @@ impl Live {
         if let Some(f) = follow {
             self.request(f);
         }
+        self.advance_if_ready();
     }
 
     /// Execute tool calls; returns the follow-up that lets the model continue in the same mode
@@ -1088,7 +1149,16 @@ impl Live {
                 match canvas::parse_guide(&serde_json::from_str(args).unwrap_or(Value::Null)) {
                     Ok(g) => {
                         guided = true;
-                        self.st.lock().unwrap().guide = Some(g);
+                        let mut st = self.st.lock().unwrap();
+                        // Revision at question time; a refreshed guide (I) keeps earlier marks.
+                        for f in &g.fields {
+                            if !st.targets.iter().any(|(t, _)| t == f) {
+                                let rev = st.canvas.item(&f.step, &f.field).map_or(0, |i| i.revision);
+                                st.targets.push((f.clone(), rev));
+                            }
+                        }
+                        st.guide = Some(g);
+                        drop(st);
                         self.emit_snapshot();
                         json!({"ok": true}).to_string()
                     }
@@ -1100,9 +1170,19 @@ impl Live {
             self.send(Conn::Rt, json!({"type": "conversation.item.create", "item": {
                 "type": "function_call_output", "call_id": c["call_id"], "output": out}}));
         }
-        if answered {
-            self.next_question();
-            return None;
+        // Answered: the model says so, or every field the question is about was written since.
+        if kind == Reply::Silent {
+            let mut st = self.st.lock().unwrap();
+            let filled = !st.targets.is_empty()
+                && st.targets.iter().all(|(f, rev)| {
+                    st.canvas.item(&f.step, &f.field).is_some_and(|i| i.revision > *rev && !i.value.trim().is_empty() && i.status != "UNKNOWN")
+                });
+            if answered || filled {
+                st.advance_pending = true;
+                drop(st);
+                // Waits for the presenter to finish talking (see advance_if_ready).
+                return None;
+            }
         }
         if kind == Reply::Inspire && guided {
             return None;

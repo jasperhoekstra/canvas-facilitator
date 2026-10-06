@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 — 2026-10-06 (niet gesigneerd)
+
+- Bijna realtime vullen: tijdens lang praten wordt na ±4 s bij een korte adempauze (uiterlijk na 8 s) tussentijds verwerkt; einde van een beurt na 500 ms stilte (was 700 ms). Canvasupdates worden per tool-aanroep toegepast zodra die compleet is, niet pas aan het eind van de AI-response.
+- Doorschakelen voelt natuurlijker: de vraag is beantwoord zodra alle vakjes waar ze over gaat sinds de vraag zijn ingevuld (of het model `question_answered` aanroept), en de volgende vraag komt pas als de presentator is uitgepraat.
+
 ## 1.0.0 — 2026-10-06 (niet gesigneerd)
 
 - De facilitator werkt de vijf stappen strikt in volgorde af. Het huidige hoofdstuk is het eerste dat nog niet af is (bevestigd, of alle velden ingevuld of geparkeerd); antwoorden over latere hoofdstukken worden vastgelegd maar verplaatsen de focus niet. `complete_step` voor een later hoofdstuk wordt geweigerd.
