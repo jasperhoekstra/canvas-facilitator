@@ -68,7 +68,7 @@ async fn respond(ws: &mut Ws, run: &mut Run, line_idx: usize) {
             let args: Value = serde_json::from_str(c["arguments"].as_str().unwrap_or("{}")).unwrap_or_default();
             let ctx = canvas::ToolCtx { last_user_turn: Some(format!("u{line_idx}")), now: line_idx as i64 };
             // Signal tool, no canvas mutation: every eval turn already asks the next question.
-            let out = if name == canvas::QUESTION_ANSWERED {
+            let out = if name == canvas::QUESTION_ANSWERED || name == canvas::SHOW_GUIDE {
                 json!({"ok": true})
             } else { match canvas::validate(name, &args, &run.canvas, &ctx) {
                 Ok(m) => {

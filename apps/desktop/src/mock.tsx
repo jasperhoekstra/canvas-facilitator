@@ -89,7 +89,9 @@ const session = { id: "s1", title: "AI-assistent voor offerte-aanvragen", create
   model: "gpt-realtime-2.1", transcribeModel: "gpt-live-transcribe", parentId: null, priceVersion: "2026-10-04", budgetUsd: "2.00",
   metricsJson: JSON.stringify({ elapsedMs: 900000, userTurns: 14, assistantTurns: 15, responses: 22, p50FirstDeltaMs: 640, p95FirstDeltaMs: 1210 }) };
 const snap = { sessionId: "s1", status: "ACTIVE", costUsd: "0.4123", costIncomplete: true, budgetUsd: "2.00",
-  voiceState: q.has("late") ? "denkt" : "luistert", connection: "verbonden", muted: false, paused: false, model: "gpt-realtime-2.1", userTurns: 7, audioInSecs: 95 };
+  voiceState: q.has("late") ? "denkt" : "luistert", connection: "verbonden", muted: false, paused: false, model: "gpt-realtime-2.1", userTurns: 7, audioInSecs: 95,
+  guide: { kind: "stelt_voor" as const, bullets: ["Doorlooptijd offerte als KPI: van aanvraag tot verzending", "Nulmeting: steekproef van 50 offertes uit Q3", "Target: 30% sneller binnen zes maanden"], fields: [{ step: "BEGRENS", field: "risico" }, { step: "BEGRENS", field: "guardrail" }] },
+  refill: null };
 
 mockIPC((cmd) => {
   switch (cmd) {
